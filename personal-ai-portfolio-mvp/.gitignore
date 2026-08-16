@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+backups/*.sql
+imports/*.uploaded.csv
+exports/*
+!exports/.gitkeep
+.idea/
+.vscode/
+.DS_Store

@@ -1,0 +1,50 @@
+name: personal-ai-portfolio
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.5-pg18-trixie
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - portfolio_db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./services/api
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-INR}
+      MAX_POSITION_WEIGHT: ${MAX_POSITION_WEIGHT:-0.15}
+      TRIM_POSITION_WEIGHT: ${TRIM_POSITION_WEIGHT:-0.20}
+      PREFERRED_HOLD_DAYS: ${PREFERRED_HOLD_DAYS:-365}
+      LOSS_REVIEW_THRESHOLD: ${LOSS_REVIEW_THRESHOLD:--0.15}
+      PROFIT_REVIEW_THRESHOLD: ${PROFIT_REVIEW_THRESHOLD:-0.30}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: ./services/ui
+    environment:
+      API_BASE_URL: ${API_BASE_URL:-http://api:8000}
+      APP_TITLE: ${APP_TITLE:-Personal AI Portfolio Manager}
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:8501:8501"
+    restart: unless-stopped
+
+volumes:
+  portfolio_db:

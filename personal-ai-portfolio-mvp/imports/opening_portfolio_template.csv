@@ -1,0 +1,2 @@
+account_name,broker_name,exchange,symbol,company_name,isin,quantity,average_price,as_of_date,notes
+Primary,My Broker,NSE,INFY,Infosys Limited,INE009A01021,10,1500,2026-08-01,Opening holding

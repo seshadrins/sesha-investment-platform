@@ -1,0 +1,2 @@
+account_name,broker_name,exchange,symbol,company_name,isin,transaction_type,trade_date,quantity,price,charges,notes
+Primary,My Broker,NSE,INFY,Infosys Limited,INE009A01021,BUY,2026-08-01,5,1520,25,Additional purchase
