@@ -70,3 +70,27 @@ class UpstoxSyncRequest(BaseModel):
     as_of: date = Field(default_factory=date.today)
     include_prices: bool = True
     include_company_profiles: bool = True
+
+
+class WatchlistCreate(BaseModel):
+    instrument_id: int
+    notes: str | None = None
+
+
+class DisclosureSourceMappingUpsert(BaseModel):
+    instrument_id: int
+    exchange: str
+    source_code: str
+    active: bool = True
+
+
+class DisclosureIngestionRequest(BaseModel):
+    period: date | None = None
+    force: bool = False
+    mapping_ids: list[int] | None = None
+
+
+class AliasReviewDecision(BaseModel):
+    decision: str
+    investor_id: str | None = None
+    note: str | None = None

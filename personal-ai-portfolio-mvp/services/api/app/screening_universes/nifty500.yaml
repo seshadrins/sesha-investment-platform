@@ -1,0 +1,17 @@
+id: nifty500
+name: NIFTY 500
+description: >-
+  The default candidate universe. Constituents are assembled from the official
+  NIFTY 100, NIFTY Midcap 150, and NIFTY Smallcap 250 constituent files so each
+  company retains a Large, Mid, or Small cap label.
+shortlist_recommendation: STRONG_BUY
+sources:
+  - cap_segment: LARGE
+    name: NIFTY 100
+    url: https://www.niftyindices.com/IndexConstituent/ind_nifty100list.csv
+  - cap_segment: MID
+    name: NIFTY Midcap 150
+    url: https://www.niftyindices.com/IndexConstituent/ind_niftymidcap150list.csv
+  - cap_segment: SMALL
+    name: NIFTY Smallcap 250
+    url: https://www.niftyindices.com/IndexConstituent/ind_niftysmallcap250list.csv

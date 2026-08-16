@@ -6,8 +6,8 @@ import streamlit as st
 from common import api_get, api_post, instrument_label, render_sidebar
 
 render_sidebar()
-st.title("Prices & Research Data")
-st.caption("Keep valuations current automatically with Upstox Analytics or use manual/CSV fallbacks.")
+st.title("Data Sources & Sync")
+st.caption("Operational status and controls for Upstox Analytics, manual prices, and CSV fallbacks.")
 
 instruments = api_get("/instruments")
 upstox = api_get("/providers/upstox")

@@ -4,8 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.models import TransactionType
+from app.models import ThesisStatus, TransactionType
 from app.portfolio import calculate_position
+from app.recommendations import recommend
 
 
 def tx(i, kind, d, qty, price, charges=0):
@@ -62,3 +63,15 @@ def test_dividend_income_uses_quantity_price_and_charges():
         ]
     )
     assert result.dividend_income == Decimal("24.0")
+
+
+def test_invalid_thesis_is_a_strong_sell():
+    action, reasons = recommend(
+        weight=.05,
+        return_pct=.10,
+        holding_days=500,
+        thesis_status=ThesisStatus.INVALID,
+        has_price=True,
+    )
+    assert action == "STRONG_SELL"
+    assert "no longer holds" in reasons[0]

@@ -1,0 +1,28 @@
+id: growth_at_quality
+version: 1
+name: Growth at Quality
+description: Faster top-line and earnings growth, accepted only when profitability is cash-backed.
+applicability: non_financial
+minimum_score: 75
+minimum_coverage: 60
+rules:
+  - feature: revenue_growth_pct
+    operator: gte
+    value: 12
+    weight: 30
+    label: Revenue growth at least 12%
+  - feature: net_profit_growth_pct
+    operator: gte
+    value: 12
+    weight: 30
+    label: Net profit growth at least 12%
+  - feature: operating_margin_pct
+    operator: gte
+    value: 8
+    weight: 15
+    label: Operating margin at least 8%
+  - feature: cash_conversion
+    operator: gte
+    value: 0.6
+    weight: 25
+    label: Operating cash flow covers at least 60% of net profit

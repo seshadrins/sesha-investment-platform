@@ -1,0 +1,110 @@
+version: 2
+methodology:
+  material_change_percentage_points: 0.10
+  stale_after_days: 140
+  evidence_policy: >-
+    Track only dated, attributable public disclosures. Investor activity is corroborating
+    evidence and must never override financial, valuation, governance, or portfolio rules.
+  selection_policy: >-
+    Curated defaults are widely followed public-market participants with names appearing in
+    exchange shareholding data. Inclusion is not an endorsement, performance ranking, or claim
+    that future decisions will be excellent. Disable any profile locally.
+investors:
+  - id: vijay_kedia
+    name: Vijay Kedia
+    aliases:
+      - VIJAY KISHANLAL KEDIA
+      - VIJAY KEDIA
+    description: Public-market investor profile; editable in configuration.
+    enabled: true
+  - id: ashish_kacholia
+    name: Ashish Kacholia
+    aliases:
+      - ASHISH KACHOLIA
+    description: Public-market investor profile; editable in configuration.
+    enabled: true
+  - id: mukul_agrawal
+    name: Mukul Mahavir Agrawal
+    aliases:
+      - MUKUL MAHAVIR AGRAWAL
+      - MUKUL AGRAWAL
+    description: Public-market investor profile; editable in configuration.
+    enabled: true
+  - id: dolly_khanna
+    name: Dolly Khanna
+    aliases:
+      - DOLLY KHANNA
+    description: Public-market investor profile; disclosures may also require separately attributable entity mapping.
+    enabled: true
+  - id: rekha_jhunjhunwala
+    name: Rekha Jhunjhunwala
+    aliases:
+      - REKHA JHUNJHUNWALA
+      - REKHA RAKESH JHUNJHUNWALA
+    description: Public-market investor profile; legacy or associated entities must remain separately attributable.
+    enabled: true
+  - id: akash_bhanshali
+    name: Akash Bhanshali
+    aliases:
+      - AKASH BHANSHALI
+      - AKASH BHANSALI
+    description: Public-market investor profile; editable in configuration.
+    enabled: true
+  - id: ashish_dhawan
+    name: Ashish Dhawan
+    aliases:
+      - ASHISH DHAWAN
+    description: Public-market investor profile; editable in configuration.
+    enabled: true
+  - id: nemish_shah
+    name: Nemish S. Shah
+    aliases:
+      - NEMISH S SHAH
+      - NEMISH SHAH
+    description: Public-market investor profile; editable in configuration.
+    enabled: true
+  - id: madhusudan_kela
+    name: Madhusudan Kela
+    aliases:
+      - MADHUSUDAN KELA
+    description: Public-market investor profile; family or investment entities require separate attribution.
+    enabled: true
+  - id: sunil_singhania
+    name: Sunil Singhania
+    aliases:
+      - SUNIL SINGHANIA
+    description: Public-market investor profile; fund or investment-manager holdings are not assumed to be personal holdings.
+    enabled: true
+  - id: anil_kumar_goel
+    name: Anil Kumar Goel
+    aliases:
+      - ANIL KUMAR GOEL
+    description: Public-market investor profile; family holdings require separate attribution.
+    enabled: true
+  - id: radhakishan_damani
+    name: Radhakishan Damani
+    aliases:
+      - RADHAKISHAN DAMANI
+      - RADHAKISHAN SHIVKISHAN DAMANI
+    description: Public-market investor profile; promoter and associated-entity holdings require separate context.
+    enabled: true
+  - id: porinju_veliyath
+    name: Porinju V. Veliyath
+    aliases:
+      - PORINJU V VELIYATH
+      - PORINJU VELIYATH
+    description: Public-market investor profile; managed-fund holdings are not assumed to be personal holdings.
+    enabled: true
+  - id: mohnish_pabrai
+    name: Mohnish Pabrai
+    aliases:
+      - MOHNISH PABRAI
+    description: Public-market investor profile; fund entities require separate attribution.
+    enabled: true
+  - id: ramesh_damani
+    name: Ramesh Damani
+    aliases:
+      - RAMESH DAMANI
+      - RAMESH S DAMANI
+    description: Public-market investor profile; editable in configuration.
+    enabled: true

@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session
 
 from datetime import date
@@ -11,20 +11,30 @@ from .providers import CompanyResearchProvider, MarketDataProvider, ProviderData
 
 def import_market_prices(db: Session, provider: MarketDataProvider, as_of: date | None = None) -> int:
     prices = provider.get_eod_prices(as_of=as_of)
+    return store_market_prices(db, prices)
+
+
+def store_market_prices(db: Session, prices: list) -> int:
+    instrument_keys = {(quote.exchange, quote.symbol) for quote in prices}
+    instruments = db.scalars(select(Instrument).where(
+        tuple_(Instrument.exchange, Instrument.symbol).in_(instrument_keys)
+    )).all() if instrument_keys else []
+    instrument_map = {(item.exchange, item.symbol): item for item in instruments}
+    ids = [item.id for item in instruments]
+    existing = db.scalars(select(Price).where(Price.instrument_id.in_(ids))).all() if ids else []
+    price_map = {(item.instrument_id, item.price_date): item for item in existing}
     for quote in prices:
-        instrument = db.scalar(select(Instrument).where(
-            Instrument.exchange == quote.exchange, Instrument.symbol == quote.symbol
-        ))
+        instrument = instrument_map.get((quote.exchange, quote.symbol))
         if not instrument:
             raise ProviderDataError(f"Unknown instrument {quote.exchange}:{quote.symbol}")
-        item = db.scalar(select(Price).where(
-            Price.instrument_id == instrument.id, Price.price_date == quote.price_date
-        ))
+        item = price_map.get((instrument.id, quote.price_date))
         if item:
             item.close_price, item.source = quote.close_price, quote.source
         else:
-            db.add(Price(instrument_id=instrument.id, price_date=quote.price_date,
-                         close_price=quote.close_price, source=quote.source))
+            item = Price(instrument_id=instrument.id, price_date=quote.price_date,
+                         close_price=quote.close_price, source=quote.source)
+            db.add(item)
+            price_map[(instrument.id, quote.price_date)] = item
     db.commit()
     return len(prices)
 

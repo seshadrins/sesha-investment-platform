@@ -27,7 +27,7 @@ with summary_tab:
     st.caption(f"{selected['exchange']} · ISIN: {selected.get('isin') or 'Missing'} · Sector: {selected.get('sector') or 'Not classified'}")
     if position:
         cols = st.columns(4)
-        cols[0].metric("Review prompt", position["recommendation"])
+        cols[0].metric("Review prompt", position["recommendation"].replace("_", " "))
         cols[1].metric("Market value", f"₹{(position['market_value'] or 0):,.2f}")
         cols[2].metric("Portfolio weight", f"{position['weight']:.1%}")
         return_text = "No price" if position["return_pct"] is None else f"{position['return_pct']:.2%}"
@@ -53,7 +53,7 @@ with thesis_tab:
         status_options = ["ACTIVE", "WATCH", "INVALID"]
         status = st.selectbox("Thesis status", status_options,
             index=status_options.index(current.get("status", "ACTIVE")),
-            help="INVALID triggers a SELL review prompt; WATCH triggers a REVIEW prompt.")
+            help="INVALID triggers a STRONG SELL prompt; WATCH triggers a REVIEW prompt.")
         reason = st.text_area("Why I own or may own this company", value=current.get("reason", ""),
                               placeholder="Business quality, valuation, and expected source of return")
         catalysts = st.text_area("Expected catalysts", value=current.get("catalysts", ""))

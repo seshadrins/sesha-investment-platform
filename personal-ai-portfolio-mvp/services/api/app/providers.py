@@ -240,6 +240,30 @@ class UpstoxMarketDataProvider:
             prices.append(MarketPrice(instrument.exchange, instrument.symbol, price_date, close_price, self.name))
         return prices
 
+    def get_price_history(
+        self, instrument: ProviderInstrument, from_date: date, to_date: date
+    ) -> list[MarketPrice]:
+        resolved_key = self._resolve_key(instrument)
+        if not resolved_key:
+            raise ProviderDataError(
+                f"{instrument.exchange}:{instrument.symbol} is not in the Upstox instrument master."
+            )
+        key = quote(resolved_key, safe="")
+        data = self._client.get(
+            f"/v3/historical-candle/{key}/days/1/{to_date.isoformat()}/{from_date.isoformat()}"
+        )
+        prices = []
+        for candle in data.get("candles") or []:
+            try:
+                price_date = date.fromisoformat(str(candle[0])[:10])
+                close_price = Decimal(str(candle[4]))
+            except (IndexError, ValueError, InvalidOperation, TypeError) as exc:
+                raise ProviderDataError(f"Malformed Upstox candle for {instrument.symbol}.") from exc
+            if from_date <= price_date <= to_date:
+                prices.append(MarketPrice(instrument.exchange, instrument.symbol, price_date,
+                                          close_price, "UPSTOX_HISTORY"))
+        return prices
+
 
 class UpstoxCompanyResearchProvider:
     name = "UPSTOX"

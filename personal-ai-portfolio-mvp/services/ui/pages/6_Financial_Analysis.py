@@ -9,10 +9,14 @@ render_sidebar()
 st.title("Financial Analysis")
 st.caption("Evidence-based company quality, trends, valuation context, and governance review.")
 
-instruments = api_get("/instruments")
+instruments = api_get("/instruments?include_candidates=true")
+portfolio = api_get("/portfolio")
+prospectives = api_get("/prospective-stocks")
+owned_ids = {item["instrument_id"] for item in portfolio["positions"]}
+prospective_ids = {item["instrument_id"] for item in prospectives}
 
-with st.expander("Research a stock not yet held"):
-    st.write("Search Upstox, add the company to the research list, and analyse it without recording a purchase.")
+with st.expander("Research an individual stock"):
+    st.write("Search Upstox and add a company to the research pool without recording a purchase. This does not place it in Prospective Stocks.")
     query = st.text_input("Company, symbol, or ISIN", placeholder="For example: TCS or INE467B01029")
     if st.button("Search Upstox", disabled=len(query.strip()) < 2):
         st.session_state["stock_search_results"] = api_get(f"/providers/upstox/search?q={quote(query.strip())}")
@@ -20,12 +24,12 @@ with st.expander("Research a stock not yet held"):
     if results:
         result_map = {f"{x['exchange']}:{x['symbol']} — {x['company_name']} ({x['isin']})": x for x in results}
         selected_result = result_map[st.selectbox("Search results", result_map)]
-        if st.button("Add to research list", type="primary"):
+        if st.button("Add for individual research", type="primary"):
             saved = api_post("/instruments", json={"exchange": selected_result["exchange"],
                 "symbol": selected_result["symbol"], "company_name": selected_result["company_name"],
                 "isin": selected_result["isin"], "sector": None, "industry": None})
             if saved:
-                st.success("Company added. No portfolio transaction was created.")
+                st.success("Company added to the research pool. It must pass the Strong Buy gate before appearing as prospective.")
                 st.rerun()
     elif "stock_search_results" in st.session_state:
         st.info("No NSE/BSE equity instruments matched that search.")
@@ -34,7 +38,39 @@ if not instruments:
     st.info("Add or discover an instrument to begin.")
     st.stop()
 
-instrument_map = {instrument_label(item): item for item in instruments}
+scope = st.radio(
+    "Analysis view",
+    ["Owned stocks", "Prospective · Strong Buy", "Other research and candidates"],
+    horizontal=True,
+    help="NIFTY 500 candidates remain in the research pool unless they pass the Strong Buy screen.",
+)
+if scope == "Owned stocks":
+    visible_instruments = [item for item in instruments if item["id"] in owned_ids]
+elif scope == "Prospective · Strong Buy":
+    visible_instruments = [item for item in instruments if item["id"] in prospective_ids]
+else:
+    visible_instruments = [item for item in instruments
+                           if item["id"] not in owned_ids and item["id"] not in prospective_ids]
+
+if not visible_instruments:
+    messages = {
+        "Owned stocks": "No currently owned stocks were found.",
+        "Prospective · Strong Buy": "No NIFTY 500 candidate currently passes the Strong Buy gate.",
+        "Other research and candidates": "No additional research candidates were found.",
+    }
+    st.info(messages[scope])
+    st.stop()
+
+if scope == "Prospective · Strong Buy":
+    st.success("Every company in this view is non-owned and currently satisfies the Strong Buy gate.")
+    with st.expander("Why these stocks qualified"):
+        for item in prospectives:
+            st.markdown(f"**{item['symbol']} · score {item['financial_score']}/100 · "
+                        f"{item['style_matches']} style matches**")
+            for reason in item["recommendation_reasons"]:
+                st.write(f"• {reason}")
+
+instrument_map = {instrument_label(item): item for item in visible_instruments}
 labels = list(instrument_map)
 default_index = next((index for index, label in enumerate(labels) if "VAIGLO" in label), 0)
 selected = instrument_map[st.selectbox("Company to analyse", labels, index=default_index)]

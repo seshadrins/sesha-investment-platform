@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
-from sqlalchemy import Date, DateTime, Enum as SAEnum, ForeignKey, JSON, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import LargeBinary, Date, DateTime, Enum as SAEnum, ForeignKey, JSON, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -52,6 +52,196 @@ class Instrument(Base):
 
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="instrument")
     prices: Mapped[list["Price"]] = relationship(back_populates="instrument")
+
+
+class WatchlistItem(Base):
+    __tablename__ = "watchlist_items"
+    __table_args__ = (UniqueConstraint("instrument_id", name="uq_watchlist_instrument"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id"))
+    status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
+    source: Mapped[str] = mapped_column(String(60), default="MANUAL_STRONG_BUY")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class UniverseMembership(Base):
+    __tablename__ = "universe_memberships"
+    __table_args__ = (
+        UniqueConstraint("universe_id", "instrument_id", name="uq_universe_instrument"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    universe_id: Mapped[str] = mapped_column(String(40))
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id"))
+    cap_segment: Mapped[str] = mapped_column(String(20))
+    active: Mapped[bool] = mapped_column(default=True)
+    as_of: Mapped[date] = mapped_column(Date, default=date.today)
+    source_url: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ScreeningResult(Base):
+    __tablename__ = "screening_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "universe_id", "instrument_id", "screened_on", name="uq_screening_result_day"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    universe_id: Mapped[str] = mapped_column(String(40))
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id"))
+    screened_on: Mapped[date] = mapped_column(Date, default=date.today)
+    recommendation: Mapped[str] = mapped_column(String(30))
+    financial_score: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+    style_matches: Mapped[int] = mapped_column(default=0)
+    analysis_status: Mapped[str] = mapped_column(String(40))
+    reasons: Mapped[list] = mapped_column(JSON, default=list)
+    criteria_version: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class InvestorDisclosure(Base):
+    __tablename__ = "investor_disclosures"
+    __table_args__ = (
+        UniqueConstraint(
+            "investor_id", "instrument_id", "report_date", name="uq_investor_disclosure_period"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    investor_id: Mapped[str] = mapped_column(String(60))
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id"))
+    report_date: Mapped[date] = mapped_column(Date)
+    filed_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    ownership_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4))
+    shares: Mapped[Decimal | None] = mapped_column(Numeric(24, 2), nullable=True)
+    source_url: Mapped[str] = mapped_column(Text)
+    source_type: Mapped[str] = mapped_column(String(40), default="EXCHANGE_FILING")
+    imported_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class DisclosureSourceMapping(Base):
+    __tablename__ = "disclosure_source_mappings"
+    __table_args__ = (
+        UniqueConstraint("exchange", "source_code", name="uq_disclosure_source_code"),
+        UniqueConstraint("instrument_id", "exchange", name="uq_disclosure_instrument_exchange"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id"), index=True)
+    exchange: Mapped[str] = mapped_column(String(10))
+    source_code: Mapped[str] = mapped_column(String(40))
+    active: Mapped[bool] = mapped_column(default=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_status: Mapped[str] = mapped_column(String(30), default="PENDING")
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class DisclosureDocument(Base):
+    __tablename__ = "disclosure_documents"
+    __table_args__ = (UniqueConstraint("source_url", name="uq_disclosure_document_source"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    mapping_id: Mapped[int | None] = mapped_column(
+        ForeignKey("disclosure_source_mappings.id"), nullable=True, index=True
+    )
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id"), index=True)
+    exchange: Mapped[str] = mapped_column(String(10))
+    report_date: Mapped[date] = mapped_column(Date, index=True)
+    filed_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    source_url: Mapped[str] = mapped_column(Text)
+    content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    parser: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    parser_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="DISCOVERED", index=True)
+    extracted_count: Mapped[int] = mapped_column(default=0)
+    matched_count: Mapped[int] = mapped_column(default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    discovered_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class InvestorAliasReview(Base):
+    __tablename__ = "investor_alias_reviews"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id", "observed_name", "proposed_investor_id",
+            name="uq_alias_review_document_name_investor",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("disclosure_documents.id"), index=True)
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id"))
+    observed_name: Mapped[str] = mapped_column(String(300))
+    normalized_name: Mapped[str] = mapped_column(String(300), index=True)
+    proposed_investor_id: Mapped[str] = mapped_column(String(60))
+    confidence: Mapped[Decimal] = mapped_column(Numeric(6, 5))
+    report_date: Mapped[date] = mapped_column(Date)
+    filed_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    ownership_pct: Mapped[Decimal] = mapped_column(Numeric(10, 4))
+    shares: Mapped[Decimal | None] = mapped_column(Numeric(24, 2), nullable=True)
+    source_url: Mapped[str] = mapped_column(Text)
+    parser: Mapped[str] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", index=True)
+    decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AppNotification(Base):
+    __tablename__ = "app_notifications"
+    __table_args__ = (UniqueConstraint("event_key", name="uq_notification_event"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_key: Mapped[str] = mapped_column(String(200))
+    category: Mapped[str] = mapped_column(String(40))
+    severity: Mapped[str] = mapped_column(String(20), default="INFO")
+    title: Mapped[str] = mapped_column(String(200))
+    message: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    delivery_status: Mapped[str] = mapped_column(String(20), default="IN_APP")
+    delivery_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class AnalysisSnapshot(Base):
+    __tablename__ = "analysis_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    snapshot_key: Mapped[str] = mapped_column(String(80), unique=True)
+    generated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    last_attempted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_status: Mapped[str] = mapped_column(String(20), default="PENDING")
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class AutomationRun(Base):
+    __tablename__ = "automation_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_key: Mapped[str] = mapped_column(String(160), unique=True)
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime, index=True)
+    trigger: Mapped[str] = mapped_column(String(30))
+    attempt: Mapped[int] = mapped_column(default=1)
+    status: Mapped[str] = mapped_column(String(20), default="RUNNING", index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    action_status: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class Transaction(Base):

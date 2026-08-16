@@ -18,9 +18,9 @@ def api_get(path: str):
         st.stop()
 
 
-def api_post(path: str, json=None, files=None):
+def api_post(path: str, json=None, files=None, timeout=120):
     try:
-        response = requests.post(f"{API}{path}", json=json, files=files, timeout=120)
+        response = requests.post(f"{API}{path}", json=json, files=files, timeout=timeout)
         if not response.ok:
             detail = response.text
             try:
@@ -48,7 +48,9 @@ def render_sidebar():
             "3. **Prices** — valuations and Upstox sync\n"
             "4. **Thesis & Review** — research decisions\n"
             "5. **Reconcile** — compare with your broker\n"
-            "6. **Financial Analysis** — held and prospective stocks"
+            "6. **Financial Analysis** — owned and Strong Buy prospects\n"
+            "7. **Investor Styles** — NIFTY 500 screen, rules, and backtests\n"
+            "8. **Followed Investors** — public-disclosure signals"
         )
         st.divider()
         st.caption("Read-only decision support. No orders are placed.")
