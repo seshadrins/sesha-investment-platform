@@ -2,9 +2,11 @@
 
 ## Phase 2 — market and company research adapters
 
-Status: CSV adapters implemented. Price imports use `MarketDataProvider`, and company metadata
-imports use `CompanyResearchProvider` through `POST /imports/company-research`. These contracts
-allow licensed broker or exchange adapters to be added without changing the core ledger.
+Status: CSV and read-only Upstox Analytics adapters implemented. Price imports use
+`MarketDataProvider`, and company metadata imports use `CompanyResearchProvider`. Upstox sync
+resolves stable instrument keys from ISINs, imports reproducible daily historical closes, and
+stores company profiles without exposing any trading capability. These contracts allow further
+licensed adapters to be added without changing the core ledger.
 
 Provider interfaces remain decoupled from the core ledger:
 
@@ -22,6 +24,10 @@ Candidate adapters:
 - Optional open-source Python package where its data-source terms permit personal use
 
 ## Phase 3 — financial analysis
+
+Status: implemented using read-only Upstox fundamentals with annual and quarterly trends,
+sector-aware ROCE/ROE/leverage/cash-conversion scoring, dated valuation observations,
+evidence-limited governance flags, prospective-stock discovery, and versioned theses.
 
 Add:
 

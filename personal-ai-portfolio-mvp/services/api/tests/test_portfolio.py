@@ -52,3 +52,13 @@ def test_oversell_fails():
                 tx(2, TransactionType.SELL, "2025-03-01", 3, 120),
             ]
         )
+
+
+def test_dividend_income_uses_quantity_price_and_charges():
+    result = calculate_position(
+        [
+            tx(1, TransactionType.BUY, "2025-01-01", 10, 100),
+            tx(2, TransactionType.DIVIDEND, "2025-03-01", 10, 2.5, 1),
+        ]
+    )
+    assert result.dividend_income == Decimal("24.0")

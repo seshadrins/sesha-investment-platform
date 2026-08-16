@@ -78,6 +78,21 @@ The first startup builds the images and creates database tables automatically.
 Company metadata can be refreshed through `POST /imports/company-research` using
 `imports/company_research_template.csv`. Blank optional fields preserve existing values.
 
+### Upstox Analytics integration
+
+Set `UPSTOX_ANALYTICS_TOKEN` in `.env` to a read-only Upstox Analytics Token, then restart the
+Compose stack. The Prices page can sync daily historical closes and company profiles for NSE/BSE
+instruments that have an ISIN. No trading endpoints are implemented or called. The status and sync
+endpoints are `GET /providers/upstox` and `POST /providers/upstox/sync`.
+
+### Financial analysis
+
+The **Financial Analysis** page works for held and prospective NSE/BSE equities. Search Upstox to
+add an unowned company without creating a transaction, then refresh its annual and quarterly
+statements, ratios, ownership data, corporate actions, and competitors. Scores are transparent
+review aids; bank/NBFC/insurance companies are excluded from industrial leverage and cash-quality
+rules. Valuation bands build from dated observations and disclose when history is insufficient.
+
 ## Stop
 
 ```powershell
@@ -123,7 +138,7 @@ pytest
 
 ## Important limitations
 
-- End-of-day prices must initially be entered manually or imported from CSV.
+- End-of-day prices can be synced from Upstox Analytics or entered manually/imported from CSV.
 - Corporate actions are represented as explicit transactions; automated corporate-action processing is not included.
 - FIFO is used for realised P&L in the MVP.
 - Taxes are recorded as transaction charges but tax reporting is not implemented.

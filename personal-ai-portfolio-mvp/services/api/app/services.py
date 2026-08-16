@@ -43,10 +43,12 @@ def portfolio_snapshot(db: Session) -> dict:
     total_market_value = Decimal("0")
     total_cost = Decimal("0")
     total_realised = Decimal("0")
+    total_dividends = Decimal("0")
 
     for (account_id, instrument_id), txs in grouped.items():
         result = calculate_position(txs)
         total_realised += result.realised_profit
+        total_dividends += result.dividend_income
         if result.quantity <= 0:
             continue
 
@@ -85,6 +87,7 @@ def portfolio_snapshot(db: Session) -> dict:
                 "unrealised_profit": float(unrealised) if unrealised is not None else None,
                 "return_pct": return_pct,
                 "realised_profit": float(result.realised_profit),
+                "dividend_income": float(result.dividend_income),
                 "first_purchase_date": (
                     result.first_purchase_date.isoformat()
                     if result.first_purchase_date
@@ -134,6 +137,8 @@ def portfolio_snapshot(db: Session) -> dict:
             "remaining_cost": float(total_cost),
             "unrealised_profit": float(unrealised_total),
             "realised_profit": float(total_realised),
+            "dividend_income": float(total_dividends),
+            "total_profit": float(unrealised_total + total_realised + total_dividends),
             "position_count": len(provisional),
         },
         "positions": provisional,

@@ -24,6 +24,7 @@ class PositionResult:
     remaining_cost: Decimal
     average_cost: Decimal
     realised_profit: Decimal
+    dividend_income: Decimal
     first_purchase_date: date | None
 
 
@@ -31,6 +32,7 @@ def calculate_position(transactions: Iterable[Transaction]) -> PositionResult:
     """Calculate one account/instrument position using FIFO lots."""
     lots: list[Lot] = []
     realised = ZERO
+    dividends = ZERO
     first_purchase: date | None = None
 
     ordered = sorted(transactions, key=lambda t: (t.trade_date, t.id or 0))
@@ -67,6 +69,8 @@ def calculate_position(transactions: Iterable[Transaction]) -> PositionResult:
                 raise ValueError(
                     f"Transaction sells {qty} units but only {qty - remaining} are available."
                 )
+        elif tx.transaction_type == TransactionType.DIVIDEND:
+            dividends += (qty * price) - charges
 
     quantity = sum((lot.quantity for lot in lots), ZERO)
     remaining_cost = sum((lot.quantity * lot.unit_cost for lot in lots), ZERO)
@@ -78,5 +82,6 @@ def calculate_position(transactions: Iterable[Transaction]) -> PositionResult:
         remaining_cost=remaining_cost,
         average_cost=average_cost,
         realised_profit=realised,
+        dividend_income=dividends,
         first_purchase_date=first_open_date,
     )

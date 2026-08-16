@@ -5,8 +5,8 @@ import io
 from datetime import date
 from decimal import Decimal
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
-from sqlalchemy import select
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db
@@ -15,7 +15,9 @@ from .models import (
     DecisionJournal,
     Instrument,
     Price,
+    ResearchSnapshot,
     Thesis,
+    ThesisVersion,
     Transaction,
     TransactionType,
 )
@@ -28,10 +30,23 @@ from .schemas import (
     PriceCreate,
     ThesisUpsert,
     TransactionCreate,
+    UpstoxSyncRequest,
 )
+from .config import settings
 from .services import portfolio_snapshot
-from .providers import CsvCompanyResearchProvider, CsvMarketDataProvider, ProviderDataError
-from .research import import_company_research, import_market_prices
+from .providers import (
+    CsvCompanyResearchProvider,
+    CsvMarketDataProvider,
+    ProviderConnectionError,
+    ProviderDataError,
+    ProviderInstrument,
+    UpstoxClient,
+    UpstoxCompanyResearchProvider,
+    UpstoxMarketDataProvider,
+    UpstoxFundamentalsProvider,
+)
+from .research import import_company_research, import_market_prices, store_fundamentals
+from .financial_analysis import build_financial_analysis
 
 app = FastAPI(
     title="Personal AI Portfolio Manager API",
@@ -163,6 +178,25 @@ def upsert_price(payload: PriceCreate, db: Session = Depends(get_db)):
     return {"id": item.id}
 
 
+@app.get("/prices")
+def list_prices(db: Session = Depends(get_db)):
+    rows = db.execute(
+        select(Price, Instrument)
+        .join(Instrument, Price.instrument_id == Instrument.id)
+        .order_by(Price.price_date.desc(), Instrument.exchange, Instrument.symbol)
+    ).all()
+    return [{
+        "id": price.id,
+        "instrument_id": instrument.id,
+        "exchange": instrument.exchange,
+        "symbol": instrument.symbol,
+        "company_name": instrument.company_name,
+        "price_date": price.price_date.isoformat(),
+        "close_price": float(price.close_price),
+        "source": price.source,
+    } for price, instrument in rows]
+
+
 @app.post("/theses")
 def upsert_thesis(payload: ThesisUpsert, db: Session = Depends(get_db)):
     thesis = db.scalar(select(Thesis).where(Thesis.instrument_id == payload.instrument_id))
@@ -172,8 +206,12 @@ def upsert_thesis(payload: ThesisUpsert, db: Session = Depends(get_db)):
     else:
         thesis = Thesis(**payload.model_dump())
         db.add(thesis)
+    next_version = (db.scalar(select(func.max(ThesisVersion.version)).where(
+        ThesisVersion.instrument_id == payload.instrument_id
+    )) or 0) + 1
+    db.add(ThesisVersion(**payload.model_dump(), version=next_version))
     db.commit()
-    return {"id": thesis.id}
+    return {"id": thesis.id, "version": next_version}
 
 
 @app.get("/theses/{instrument_id}")
@@ -191,6 +229,23 @@ def get_thesis(instrument_id: int, db: Session = Depends(get_db)):
         "invalidation_conditions": thesis.invalidation_conditions,
         "target_horizon_months": thesis.target_horizon_months,
     }
+
+
+@app.get("/theses/{instrument_id}/history")
+def get_thesis_history(instrument_id: int, db: Session = Depends(get_db)):
+    rows = db.scalars(select(ThesisVersion).where(
+        ThesisVersion.instrument_id == instrument_id
+    ).order_by(ThesisVersion.version.desc())).all()
+    return [{
+        "version": row.version,
+        "status": row.status.value,
+        "reason": row.reason,
+        "catalysts": row.catalysts,
+        "risks": row.risks,
+        "invalidation_conditions": row.invalidation_conditions,
+        "target_horizon_months": row.target_horizon_months,
+        "created_at": row.created_at.isoformat(),
+    } for row in rows]
 
 
 @app.post("/decisions")
@@ -359,6 +414,131 @@ def import_research(file: UploadFile = File(...), db: Session = Depends(get_db))
         db.rollback()
         raise HTTPException(400, str(exc)) from exc
     return {"imported": count, "provider": "CSV_RESEARCH"}
+
+
+def _upstox_instruments(db: Session) -> tuple[list[ProviderInstrument], list[str]]:
+    instruments = db.scalars(select(Instrument).order_by(Instrument.exchange, Instrument.symbol)).all()
+    supported, skipped = [], []
+    for instrument in instruments:
+        if instrument.exchange.upper() not in {"NSE", "BSE"} or not instrument.isin:
+            skipped.append(f"{instrument.exchange}:{instrument.symbol}")
+            continue
+        supported.append(ProviderInstrument(
+            exchange=instrument.exchange.upper(), symbol=instrument.symbol.upper(), isin=instrument.isin
+        ))
+    return supported, skipped
+
+
+@app.get("/providers/upstox")
+def upstox_status(db: Session = Depends(get_db)):
+    supported, skipped = _upstox_instruments(db)
+    return {
+        "configured": bool(settings.upstox_token),
+        "mode": "analytics_read_only",
+        "eligible_instruments": len(supported),
+        "skipped_instruments": skipped,
+    }
+
+
+@app.get("/providers/upstox/search")
+def search_upstox_instruments(q: str = Query(min_length=2, max_length=50)):
+    if not settings.upstox_token:
+        raise HTTPException(503, "UPSTOX_ANALYTICS_TOKEN is not configured.")
+    client = UpstoxClient(settings.upstox_token, settings.upstox_api_base_url)
+    try:
+        return UpstoxFundamentalsProvider(client).search_instruments(q)
+    except ProviderConnectionError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    finally:
+        client.close()
+
+
+@app.post("/providers/upstox/sync")
+def sync_upstox(payload: UpstoxSyncRequest, db: Session = Depends(get_db)):
+    if not settings.upstox_token:
+        raise HTTPException(503, "UPSTOX_ANALYTICS_TOKEN is not configured.")
+    instruments, skipped = _upstox_instruments(db)
+    if not instruments:
+        raise HTTPException(400, "No NSE/BSE instruments with an ISIN are available to sync.")
+
+    client = UpstoxClient(settings.upstox_token, settings.upstox_api_base_url)
+    prices_imported = profiles_imported = 0
+    provider_errors: list[str] = []
+    try:
+        if payload.include_prices:
+            market_provider = UpstoxMarketDataProvider(instruments, client)
+            prices_imported = import_market_prices(
+                db, market_provider, as_of=payload.as_of
+            )
+            provider_errors.extend(market_provider.errors)
+        if payload.include_company_profiles:
+            company_provider = UpstoxCompanyResearchProvider(instruments, client)
+            profiles_imported = import_company_research(
+                db, company_provider
+            )
+            provider_errors.extend(company_provider.errors)
+    except ProviderDataError as exc:
+        db.rollback()
+        raise HTTPException(400, str(exc)) from exc
+    except ProviderConnectionError as exc:
+        db.rollback()
+        raise HTTPException(502, str(exc)) from exc
+    finally:
+        client.close()
+    return {
+        "provider": "UPSTOX",
+        "as_of": payload.as_of.isoformat(),
+        "prices_imported": prices_imported,
+        "profiles_imported": profiles_imported,
+        "skipped_instruments": skipped,
+        "provider_errors": provider_errors,
+    }
+
+
+@app.post("/providers/upstox/fundamentals/{instrument_id}/sync")
+def sync_upstox_fundamentals(instrument_id: int, db: Session = Depends(get_db)):
+    instrument = db.get(Instrument, instrument_id)
+    if not instrument:
+        raise HTTPException(404, "Instrument not found.")
+    if not instrument.isin:
+        raise HTTPException(400, "An ISIN is required for fundamental analysis.")
+    if not settings.upstox_token:
+        raise HTTPException(503, "UPSTOX_ANALYTICS_TOKEN is not configured.")
+    client = UpstoxClient(settings.upstox_token, settings.upstox_api_base_url)
+    try:
+        provider = UpstoxFundamentalsProvider(client)
+        bundle = provider.get_bundle(instrument.isin)
+        if provider.errors:
+            bundle["PROVIDER_ERRORS"] = {"errors": provider.errors}
+        imported = store_fundamentals(db, instrument, bundle, "UPSTOX")
+    except ProviderConnectionError as exc:
+        db.rollback()
+        raise HTTPException(502, str(exc)) from exc
+    finally:
+        client.close()
+    return {"provider": "UPSTOX", "instrument_id": instrument.id,
+            "datasets_imported": imported, "provider_errors": provider.errors}
+
+
+@app.get("/analysis/{instrument_id}")
+def get_financial_analysis(instrument_id: int, db: Session = Depends(get_db)):
+    instrument = db.get(Instrument, instrument_id)
+    if not instrument:
+        raise HTTPException(404, "Instrument not found.")
+    return build_financial_analysis(db, instrument)
+
+
+@app.get("/research/{instrument_id}")
+def get_research(instrument_id: int, db: Session = Depends(get_db)):
+    rows = db.scalars(select(ResearchSnapshot).where(
+        ResearchSnapshot.instrument_id == instrument_id
+    ).order_by(ResearchSnapshot.research_type, ResearchSnapshot.provider)).all()
+    return [{
+        "provider": row.provider,
+        "research_type": row.research_type,
+        "as_of": row.as_of.isoformat(),
+        "payload": row.payload,
+    } for row in rows]
 
 
 @app.post("/reconcile")

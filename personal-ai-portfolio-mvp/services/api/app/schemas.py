@@ -64,3 +64,9 @@ class DecisionCreate(BaseModel):
     rationale: str
     user_decision: str | None = None
     notes: str | None = None
+
+
+class UpstoxSyncRequest(BaseModel):
+    as_of: date = Field(default_factory=date.today)
+    include_prices: bool = True
+    include_company_profiles: bool = True

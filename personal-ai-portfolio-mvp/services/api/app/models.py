@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
-from sqlalchemy import Date, DateTime, Enum as SAEnum, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Date, DateTime, Enum as SAEnum, ForeignKey, JSON, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -86,6 +86,39 @@ class Price(Base):
     instrument: Mapped[Instrument] = relationship(back_populates="prices")
 
 
+class ResearchSnapshot(Base):
+    __tablename__ = "research_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "instrument_id", "provider", "research_type", name="uq_research_instrument_provider_type"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id"))
+    provider: Mapped[str] = mapped_column(String(30))
+    research_type: Mapped[str] = mapped_column(String(40))
+    as_of: Mapped[date] = mapped_column(Date, default=date.today)
+    payload: Mapped[dict] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ValuationMetricSnapshot(Base):
+    __tablename__ = "valuation_metric_snapshots"
+    __table_args__ = (
+        UniqueConstraint("instrument_id", "metric", "as_of", "provider", name="uq_valuation_metric_day"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id"))
+    metric: Mapped[str] = mapped_column(String(30))
+    as_of: Mapped[date] = mapped_column(Date)
+    value: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    sector_value: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    provider: Mapped[str] = mapped_column(String(30))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class Thesis(Base):
     __tablename__ = "theses"
     __table_args__ = (UniqueConstraint("instrument_id", name="uq_current_thesis_instrument"),)
@@ -99,6 +132,24 @@ class Thesis(Base):
     invalidation_conditions: Mapped[str] = mapped_column(Text, default="")
     target_horizon_months: Mapped[int] = mapped_column(default=12)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ThesisVersion(Base):
+    __tablename__ = "thesis_versions"
+    __table_args__ = (
+        UniqueConstraint("instrument_id", "version", name="uq_thesis_instrument_version"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id"))
+    version: Mapped[int] = mapped_column()
+    status: Mapped[ThesisStatus] = mapped_column(SAEnum(ThesisStatus))
+    reason: Mapped[str] = mapped_column(Text, default="")
+    catalysts: Mapped[str] = mapped_column(Text, default="")
+    risks: Mapped[str] = mapped_column(Text, default="")
+    invalidation_conditions: Mapped[str] = mapped_column(Text, default="")
+    target_horizon_months: Mapped[int] = mapped_column(default=12)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class DecisionJournal(Base):
