@@ -72,6 +72,13 @@ PostgreSQL + pgvector
 Recommendation rules remain deterministic. Phase 5 uses an LLM only as a schema-validated parser
 fallback after deterministic XBRL extraction; model output never changes recommendation rules.
 
+Phase 6 adds a **Document Analysis** page for imported PDF annual reports and PDF/UTF-8 earnings
+transcripts. Originals, hashes, extracted page/section text, citations, and model/prompt provenance
+are retained. Ollama is tried first and configured OpenRouter is the fallback. Generated summaries,
+catalysts, risks, and invalidation conditions remain drafts until accepted or rejected by the user;
+they never modify a thesis or recommendation automatically. Image-only PDFs must be OCRed before
+import. Configure limits with `DOCUMENT_MAX_BYTES` and `DOCUMENT_LLM_MAX_CHARS`.
+
 ## Prerequisites on Windows
 
 1. Windows 10/11 with WSL 2 enabled.

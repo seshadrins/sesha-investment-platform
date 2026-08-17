@@ -137,6 +137,7 @@ class DisclosureSourceMapping(Base):
     source_code: Mapped[str] = mapped_column(String(40))
     active: Mapped[bool] = mapped_column(default=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_report_period: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     last_status: Mapped[str] = mapped_column(String(30), default="PENDING")
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -242,6 +243,18 @@ class AutomationRun(Base):
     action_status: Mapped[dict] = mapped_column(JSON, default=dict)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AutomationScheduleConfig(Base):
+    __tablename__ = "automation_schedule_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    days: Mapped[str] = mapped_column(String(40), default="tue-sat")
+    hour: Mapped[int] = mapped_column(default=6)
+    minute: Mapped[int] = mapped_column(default=0)
+    timezone: Mapped[str] = mapped_column(String(80), default="Asia/Kolkata")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class Transaction(Base):
@@ -352,4 +365,55 @@ class DecisionJournal(Base):
     rationale: Mapped[str] = mapped_column(Text)
     user_decision: Mapped[str | None] = mapped_column(String(30), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ResearchDocument(Base):
+    __tablename__ = "research_documents"
+    __table_args__ = (UniqueConstraint("instrument_id", "content_hash", name="uq_research_document_hash"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id"), index=True)
+    document_type: Mapped[str] = mapped_column(String(30))
+    title: Mapped[str] = mapped_column(String(240))
+    report_date: Mapped[date] = mapped_column(Date)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    filename: Mapped[str] = mapped_column(String(240))
+    content_type: Mapped[str] = mapped_column(String(100))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    page_count: Mapped[int] = mapped_column(default=0)
+    parser_version: Mapped[str] = mapped_column(String(40), default="document-text-v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ResearchDocumentSection(Base):
+    __tablename__ = "research_document_sections"
+    __table_args__ = (UniqueConstraint("document_id", "section_index", name="uq_document_section_index"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("research_documents.id"), index=True)
+    section_index: Mapped[int] = mapped_column()
+    page_number: Mapped[int | None] = mapped_column(nullable=True)
+    heading: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    text: Mapped[str] = mapped_column(Text)
+
+
+class GroundedDocumentAnalysis(Base):
+    __tablename__ = "grounded_document_analyses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("research_documents.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="DRAFT", index=True)
+    summary: Mapped[str] = mapped_column(Text)
+    catalysts: Mapped[list] = mapped_column(JSON, default=list)
+    risks: Mapped[list] = mapped_column(JSON, default=list)
+    invalidation_conditions: Mapped[list] = mapped_column(JSON, default=list)
+    provider: Mapped[str] = mapped_column(String(30))
+    model: Mapped[str] = mapped_column(String(160))
+    prompt_version: Mapped[str] = mapped_column(String(60))
+    evidence_section_ids: Mapped[list] = mapped_column(JSON, default=list)
+    omitted_section_count: Mapped[int] = mapped_column(default=0)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

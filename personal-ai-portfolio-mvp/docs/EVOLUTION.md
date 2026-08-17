@@ -16,8 +16,8 @@ Last reconciled with the running application: **2026-08-17**.
 | 3 | Fundamentals, valuation, governance, and financial analysis | Implemented |
 | 4 | Investor styles, NIFTY 500 screening, shortlist, and backtests | Implemented; reporting-period screening is resumable |
 | 5 | Followed-investor disclosure signals | Implemented; official-source ingestion, validated parser fallbacks, alias review, and notifications are operational |
-| 6 | Grounded annual-report/transcript analysis | Planned |
-| 7 | Scheduled analysis, monitoring, and notifications | In progress; orchestration, persistent run monitoring, recovery, and forced runs implemented; external notifications remain |
+| 6 | Grounded annual-report/transcript analysis | Implemented |
+| 7 | Scheduled analysis, monitoring, and notifications | Implemented |
 | 8 | Notional portfolio, portfolio-level backtesting, and learning | Planned |
 | 9 | IPO lifecycle analysis before listing and through the first listed year | Planned |
 
@@ -155,6 +155,8 @@ Implemented capabilities:
 - Stock-by-investor matrix and source-linked activity feed.
 - Owned, Prospective, and Research context labels.
 - Scheduler-driven quarterly disclosure coverage checks after the configured filing lag.
+- Cycle-aware disclosure coverage distinguishes normal batch progress, completed periods with no
+  attributable observation, current evidence, and genuine source/parser/review blockers.
 - Polite, throttled official NSE/BSE source adapters, restart-safe batches, cached source documents,
   content hashes, source mappings, parser versions, and per-source error status.
 - Deterministic inline-XBRL/XML parsing before any model is invoked.
@@ -210,7 +212,9 @@ use BSE's official iXBRL filing path, or use the source-linked CSV recovery work
 
 ## Phase 6 — grounded document analysis
 
-Status: planned. No production document-ingestion or citation workflow exists yet.
+Status: implemented. PDF annual reports and PDF/UTF-8 transcripts can be imported, split into
+stable stored sections, analysed through the Ollama-first/OpenRouter-fallback policy, and reviewed
+with human-verifiable citations.
 
 Extend the Ollama-first/OpenRouter-fallback adapter to user-imported annual reports and transcripts:
 
@@ -219,11 +223,17 @@ Extend the Ollama-first/OpenRouter-fallback adapter to user-imported annual repo
 - Generate explanations grounded in stored evidence.
 - Never use an LLM for arithmetic, lot accounting, or hard risk gates.
 
+Implemented controls include content hashing and duplicate prevention, file-size/type validation,
+stored original bytes and extracted sections, schema-validated citations restricted to the source
+document, prompt/provider/model version retention, draft acceptance or rejection with review notes,
+and explicit rejection of image-only PDFs until OCR is supplied. Document drafts do not alter
+recommendations or theses automatically.
+
 ## Phase 7 — scheduled analysis, monitoring, and alerts
 
 Detailed operating contract: [Scheduled automation](SCHEDULED_AUTOMATION.md).
 
-Status: in progress. A dedicated APScheduler Docker worker now runs one configurable morning
+Status: implemented. A dedicated APScheduler Docker worker now runs one configurable morning
 orchestrator (default Tuesday–Saturday at `06:00 Asia/Kolkata`). The orchestrator conditionally
 refreshes prior-close prices, newly due financial evidence, a rolling NIFTY 500 batch, semi-annual
 index membership, and quarterly investor-disclosure coverage before materializing the complete
@@ -256,11 +266,12 @@ Implemented boundaries:
 - Snapshot generation then uses the refreshed prices plus stored portfolio, fundamental, style,
   and investor evidence.
 - No scheduler action places orders or infers investor exits from absent disclosures.
-
-Planned:
-
-- In-app schedule editing, richer operational metrics, and external notification channels.
-- Alerts must remain review prompts rather than automatic orders.
+- Database-backed in-app schedule editing, including enable/disable, validated cron days, local
+  time, and IANA time zone; the worker applies changes within 30 seconds without a restart.
+- Thirty-day run success, recovery, duration-percentile, and per-activity attempt/failure metrics.
+- In-app automation alerts for missed, failed, partial, stalled, and recovered runs, delivered to
+  the optional HTTPS notification webhook with the same provenance and delivery status.
+- Alerts remain review prompts rather than automatic orders.
 
 ## Phase 8 — notional portfolio, backtesting, and learning
 

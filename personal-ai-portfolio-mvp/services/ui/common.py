@@ -18,15 +18,30 @@ def api_get(path: str):
         st.stop()
 
 
-def api_post(path: str, json=None, files=None, timeout=120):
+def api_post(path: str, json=None, files=None, data=None, timeout=120):
     try:
-        response = requests.post(f"{API}{path}", json=json, files=files, timeout=timeout)
+        response = requests.post(f"{API}{path}", json=json, files=files, data=data, timeout=timeout)
         if not response.ok:
             detail = response.text
             try:
                 detail = response.json().get("detail", detail)
             except ValueError:
                 pass
+            st.error(f"Could not complete the request: {detail}")
+            return None
+        return response.json()
+    except requests.RequestException as exc:
+        st.error(f"The portfolio service is unavailable: {exc}")
+        return None
+
+
+def api_put(path: str, json=None, timeout=120):
+    try:
+        response = requests.put(f"{API}{path}", json=json, timeout=timeout)
+        if not response.ok:
+            detail = response.text
+            try: detail = response.json().get("detail", detail)
+            except ValueError: pass
             st.error(f"Could not complete the request: {detail}")
             return None
         return response.json()
@@ -50,7 +65,8 @@ def render_sidebar():
             "5. **Reconcile** — compare with your broker\n"
             "6. **Financial Analysis** — owned and Strong Buy prospects\n"
             "7. **Investor Styles** — NIFTY 500 screen, rules, and backtests\n"
-            "8. **Followed Investors** — public-disclosure signals"
+            "8. **Followed Investors** — public-disclosure signals\n"
+            "9. **Document Analysis** — cited reports and transcripts"
         )
         st.divider()
         st.caption("Read-only decision support. No orders are placed.")

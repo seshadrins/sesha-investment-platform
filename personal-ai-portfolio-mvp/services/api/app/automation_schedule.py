@@ -86,3 +86,13 @@ def latest_date_in_payload(payload: Any) -> date | None:
 
     visit(payload)
     return max(found, default=None)
+def disclosure_coverage_state(*, remaining_mappings: int, failed_mappings: int,
+                              parser_failures: int, pending_aliases: int,
+                              ingestion_enabled: bool, missing_investors: int) -> str:
+    if (not ingestion_enabled or failed_mappings or parser_failures or pending_aliases):
+        return "ACTION_REQUIRED"
+    if remaining_mappings:
+        return "IN_PROGRESS"
+    if missing_investors:
+        return "NO_ATTRIBUTABLE_DISCLOSURE"
+    return "CURRENT"

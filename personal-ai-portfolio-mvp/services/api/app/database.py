@@ -26,6 +26,24 @@ def apply_additive_migrations() -> None:
             connection.execute(text(
                 "ALTER TABLE investor_alias_reviews ALTER COLUMN parser TYPE VARCHAR(160)"
             ))
+        if "disclosure_source_mappings" in tables:
+            connection.execute(text(
+                "ALTER TABLE disclosure_source_mappings ADD COLUMN IF NOT EXISTS "
+                "last_report_period DATE"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_disclosure_source_mappings_last_report_period "
+                "ON disclosure_source_mappings (last_report_period)"
+            ))
+        if "grounded_document_analyses" in tables:
+            connection.execute(text(
+                "ALTER TABLE grounded_document_analyses ADD COLUMN IF NOT EXISTS "
+                "evidence_section_ids JSON NOT NULL DEFAULT '[]'"
+            ))
+            connection.execute(text(
+                "ALTER TABLE grounded_document_analyses ADD COLUMN IF NOT EXISTS "
+                "omitted_section_count INTEGER NOT NULL DEFAULT 0"
+            ))
 
 
 def get_db():

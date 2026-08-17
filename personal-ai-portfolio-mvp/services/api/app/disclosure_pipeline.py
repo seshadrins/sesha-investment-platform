@@ -753,6 +753,7 @@ def run_disclosure_ingestion(
                 mapping.last_status = "SUCCESS" if filings else "NO_FILING_FOR_PERIOD"
                 mapping.last_error = None
                 mapping.last_checked_at = datetime.utcnow()
+                mapping.last_report_period = period
                 db.commit()
             except Exception as exc:
                 db.rollback()
@@ -760,6 +761,7 @@ def run_disclosure_ingestion(
                 mapping.last_status = "FAILED"
                 mapping.last_error = str(exc)[:2000]
                 mapping.last_checked_at = datetime.utcnow()
+                mapping.last_report_period = period
                 db.commit()
                 stats["errors"].append({
                     "mapping_id": mapping.id, "exchange": mapping.exchange,
@@ -886,6 +888,7 @@ def mapping_out(db: Session, mapping: DisclosureSourceMapping) -> dict:
         "exchange": mapping.exchange, "source_code": mapping.source_code,
         "active": mapping.active,
         "last_checked_at": mapping.last_checked_at.isoformat() if mapping.last_checked_at else None,
+        "last_report_period": mapping.last_report_period.isoformat() if mapping.last_report_period else None,
         "last_status": mapping.last_status, "last_error": mapping.last_error,
     }
 

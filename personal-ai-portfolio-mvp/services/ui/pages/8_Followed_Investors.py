@@ -25,6 +25,9 @@ st.caption(
 profiles = api_get("/followed-investors")
 signals = api_get("/investor-signals")
 pipeline = api_get("/investor-disclosures/status")
+automation = api_get("/analysis-schedule")
+coverage = next((item.get("last_result") for item in automation["jobs"]
+                 if item["id"] == "investor_disclosures"), None)
 reviews = api_get("/investor-disclosures/reviews?status=PENDING")
 notifications = api_get("/notifications?limit=100")
 activity = signals["activity"]
@@ -44,6 +47,15 @@ if reviews:
     st.warning(
         f"{len(reviews)} possible investor-name match(es) need review before they become evidence."
     )
+if coverage and coverage.get("coverage_status"):
+    progress = coverage.get("coverage_progress", {})
+    status = coverage["coverage_status"]
+    detail = (f"{progress.get('checked_mappings', 0)} of {progress.get('active_mappings', 0)} "
+              "active source mappings checked for this reporting period.")
+    if status == "ACTION_REQUIRED": st.error(f"Disclosure coverage: {status}. {coverage['message']} {detail}")
+    elif status == "IN_PROGRESS": st.info(f"Disclosure coverage: {status}. {coverage['message']} {detail}")
+    elif status == "NO_ATTRIBUTABLE_DISCLOSURE": st.warning(f"Disclosure coverage: {status}. {coverage['message']}")
+    else: st.success(f"Disclosure coverage: {status}. {coverage['message']}")
 
 tabs = st.tabs([
     "Stock × investor matrix", "Activity feed", "Automated ingestion", "Alias review",

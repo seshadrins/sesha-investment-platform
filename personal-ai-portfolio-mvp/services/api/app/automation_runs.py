@@ -3,12 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import AnalysisSnapshot, AutomationRun
+from .models import AnalysisSnapshot, AppNotification, AutomationRun
+from .automation_config import effective_schedule
 from .schedule_health import latest_expected_run
 
 
@@ -16,13 +17,14 @@ ACTIVE_TRIGGERS = ("SCHEDULED", "CATCH_UP", "RETRY")
 TRACKED_TRIGGERS = (*ACTIVE_TRIGGERS, "MISSED")
 
 
-def expected_scheduled_for(now: datetime | None = None) -> datetime:
+def expected_scheduled_for(now: datetime | None = None, db: Session | None = None) -> datetime:
+    schedule = effective_schedule(db) if db else None
     return latest_expected_run(
         now or datetime.now(timezone.utc),
-        settings.analysis_schedule_days,
-        settings.analysis_schedule_hour,
-        settings.analysis_schedule_minute,
-        settings.analysis_schedule_timezone,
+        schedule.days if schedule else settings.analysis_schedule_days,
+        schedule.hour if schedule else settings.analysis_schedule_hour,
+        schedule.minute if schedule else settings.analysis_schedule_minute,
+        schedule.timezone if schedule else settings.analysis_schedule_timezone,
     )
 
 
@@ -57,6 +59,25 @@ def complete_run(
     item.error = error[:4000] if error else None
     db.commit()
     db.refresh(item)
+    if settings.automation_alerts_enabled and (
+        status in {"FAILED", "PARTIAL", "MISSED", "STALLED"} or
+        (status == "SUCCESS" and item.trigger in {"CATCH_UP", "RETRY"})
+    ):
+        severity = "INFO" if status == "SUCCESS" else ("WARNING" if status == "PARTIAL" else "ERROR")
+        notification = AppNotification(event_key=f"automation-run:{item.run_key}:{status}",
+            category="AUTOMATION", severity=severity,
+            title=f"Scheduled analysis {status.lower().replace('_', ' ')}",
+            message=(f"{item.trigger.replace('_', ' ').title()} run scheduled for "
+                     f"{item.scheduled_for.isoformat()} finished with {status}."),
+            payload={"run_id": item.id, "trigger": item.trigger, "status": status,
+                     "actions": item.action_status, "error": item.error})
+        db.add(notification)
+        try:
+            db.commit()
+            from .disclosure_pipeline import deliver_notifications
+            deliver_notifications(db)
+        except IntegrityError:
+            db.rollback()
     return item
 
 
@@ -96,7 +117,8 @@ def mark_stalled_runs(db: Session, now: datetime | None = None) -> list[int]:
 def schedule_health(db: Session, now: datetime | None = None) -> dict:
     aware_now = now or datetime.now(timezone.utc)
     now_utc = aware_now.astimezone(timezone.utc).replace(tzinfo=None)
-    expected = expected_scheduled_for(aware_now)
+    schedule = effective_schedule(db)
+    expected = expected_scheduled_for(aware_now, db)
     grace_deadline = expected + timedelta(minutes=settings.analysis_start_grace_minutes)
     runs = db.scalars(select(AutomationRun).where(
         AutomationRun.scheduled_for == expected,
@@ -112,7 +134,9 @@ def schedule_health(db: Session, now: datetime | None = None) -> dict:
         heartbeat_at < now_utc - timedelta(seconds=settings.scheduler_heartbeat_seconds * 3)
     )
 
-    if latest and latest.status == "RUNNING":
+    if not schedule.enabled:
+        status = "DISABLED"
+    elif latest and latest.status == "RUNNING":
         age_minutes = (now_utc - latest.started_at).total_seconds() / 60
         status = "STALLED" if age_minutes > settings.analysis_stall_minutes else "RUNNING"
     elif latest and latest.status == "SUCCESS":
@@ -125,7 +149,7 @@ def schedule_health(db: Session, now: datetime | None = None) -> dict:
         status = "OVERDUE"
     else:
         status = "WAITING"
-    if heartbeat_stale and status not in {"OVERDUE", "FAILED", "MISSED", "STALLED"}:
+    if heartbeat_stale and status not in {"DISABLED", "OVERDUE", "FAILED", "MISSED", "STALLED"}:
         status = "HEARTBEAT_STALE"
 
     last_success = db.scalar(select(AutomationRun).where(
@@ -142,7 +166,36 @@ def schedule_health(db: Session, now: datetime | None = None) -> dict:
         "last_successful_run": automation_run_out(last_success) if last_success else None,
         "start_grace_minutes": settings.analysis_start_grace_minutes,
         "stall_minutes": settings.analysis_stall_minutes,
+        "enabled": schedule.enabled,
     }
+
+
+def automation_metrics(db: Session, days: int = 30) -> dict:
+    since = datetime.utcnow() - timedelta(days=days)
+    rows = db.scalars(select(AutomationRun).where(
+        AutomationRun.started_at >= since, AutomationRun.trigger.in_(ACTIVE_TRIGGERS)
+    ).order_by(AutomationRun.started_at)).all()
+    completed = [row for row in rows if row.completed_at and row.started_at]
+    durations = sorted((row.completed_at - row.started_at).total_seconds() for row in completed)
+    def percentile(values, fraction):
+        if not values: return None
+        return round(values[min(len(values) - 1, int((len(values) - 1) * fraction))], 2)
+    statuses = {name: sum(row.status == name for row in rows)
+                for name in ("SUCCESS", "PARTIAL", "FAILED", "STALLED", "RUNNING")}
+    activity = {}
+    for row in rows:
+        for name, status in (row.action_status or {}).items():
+            stats = activity.setdefault(name, {"attempts": 0, "successes": 0, "failures": 0})
+            stats["attempts"] += 1
+            if status == "FAILED": stats["failures"] += 1
+            else: stats["successes"] += 1
+    terminal = sum(statuses[name] for name in ("SUCCESS", "PARTIAL", "FAILED", "STALLED"))
+    return {"window_days": days, "runs": len(rows), "statuses": statuses,
+        "success_rate_pct": round(statuses["SUCCESS"] * 100 / terminal, 1) if terminal else None,
+        "recovery_runs": sum(row.trigger in {"CATCH_UP", "RETRY"} for row in rows),
+        "duration_seconds": {"p50": percentile(durations, .5), "p95": percentile(durations, .95),
+                             "maximum": round(max(durations), 2) if durations else None},
+        "activities": activity}
 
 
 def automation_run_out(item: AutomationRun | None) -> dict | None:

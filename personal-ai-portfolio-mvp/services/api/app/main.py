@@ -5,7 +5,7 @@ import io
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
@@ -16,13 +16,18 @@ from .models import (
     AnalysisSnapshot,
     AppNotification,
     AutomationRun,
+    AutomationScheduleConfig,
     DecisionJournal,
     DisclosureSourceMapping,
+    DisclosureDocument,
     Instrument,
     InvestorAliasReview,
     InvestorDisclosure,
+    GroundedDocumentAnalysis,
     Price,
     ResearchSnapshot,
+    ResearchDocument,
+    ResearchDocumentSection,
     ScreeningResult,
     Thesis,
     ThesisVersion,
@@ -37,6 +42,9 @@ from .schemas import (
     AccountOut,
     DecisionCreate,
     DisclosureIngestionRequest,
+    DocumentAnalysisRequest,
+    DocumentReviewDecision,
+    AutomationScheduleUpdate,
     DisclosureSourceMappingUpsert,
     InstrumentCreate,
     InstrumentOut,
@@ -48,16 +56,21 @@ from .schemas import (
 )
 from .config import settings
 from .automation_schedule import (
+    disclosure_coverage_state,
     latest_disclosure_period_due,
     latest_date_in_payload,
     latest_financial_period_due,
     latest_universe_boundary,
 )
 from .automation_runs import (
+    automation_metrics,
     automation_run_out,
     begin_run,
     complete_run,
     schedule_health,
+)
+from .automation_config import (
+    AutomationConfigError, effective_schedule, schedule_out, update_schedule,
 )
 from .services import portfolio_snapshot
 from .providers import (
@@ -99,6 +112,9 @@ from .screening import (
     load_screening_universes,
     refresh_universe_memberships,
     select_balanced_memberships,
+)
+from .document_analysis import (
+    DocumentAnalysisError, analysis_out, analyze_document, store_document,
 )
 
 app = FastAPI(
@@ -895,12 +911,15 @@ def review_investor_alias(
 
 @app.get("/notifications")
 def list_notifications(
-    unread_only: bool = Query(default=False), limit: int = Query(default=100, ge=1, le=500),
+    unread_only: bool = Query(default=False), category: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
     query = select(AppNotification)
     if unread_only:
         query = query.where(AppNotification.read_at.is_(None))
+    if category:
+        query = query.where(AppNotification.category == category.strip().upper())
     items = db.scalars(query.order_by(AppNotification.created_at.desc()).limit(limit)).all()
     return [notification_out(item) for item in items]
 
@@ -1266,9 +1285,44 @@ def _check_investor_disclosures(db: Session) -> dict:
     }
     missing = [profile["id"] for profile in profiles
                if latest_by_investor.get(profile["id"], date.min) < period]
+    active_mappings = db.scalar(select(func.count(DisclosureSourceMapping.id)).where(
+        DisclosureSourceMapping.active.is_(True))) or 0
+    checked_mappings = db.scalar(select(func.count(DisclosureSourceMapping.id)).where(
+        DisclosureSourceMapping.active.is_(True),
+        DisclosureSourceMapping.last_report_period == period)) or 0
+    failed_mappings = db.scalar(select(func.count(DisclosureSourceMapping.id)).where(
+        DisclosureSourceMapping.active.is_(True),
+        DisclosureSourceMapping.last_report_period == period,
+        DisclosureSourceMapping.last_status == "FAILED")) or 0
+    parser_failures = db.scalar(select(func.count(DisclosureDocument.id)).where(
+        DisclosureDocument.report_date == period,
+        DisclosureDocument.status == "PARSER_FAILED")) or 0
+    pending_aliases = db.scalar(select(func.count(InvestorAliasReview.id)).where(
+        InvestorAliasReview.report_date == period,
+        InvestorAliasReview.status == "PENDING")) or 0
+    remaining_mappings = max(0, active_mappings - checked_mappings)
+    blockers = {
+        "failed_mappings": failed_mappings,
+        "parser_failures": parser_failures,
+        "pending_alias_reviews": pending_aliases,
+        "automated_ingestion_disabled": not settings.disclosure_auto_ingest_enabled,
+    }
+    coverage_status = disclosure_coverage_state(remaining_mappings=remaining_mappings,
+        failed_mappings=failed_mappings, parser_failures=parser_failures,
+        pending_aliases=pending_aliases, ingestion_enabled=settings.disclosure_auto_ingest_enabled,
+        missing_investors=len(missing))
+    if coverage_status == "ACTION_REQUIRED":
+        message = "Coverage has source, parser, alias-review, or configuration blockers requiring intervention."
+    elif coverage_status == "IN_PROGRESS":
+        message = f"Coverage is progressing normally; {remaining_mappings} active source mappings remain unchecked."
+    elif coverage_status == "NO_ATTRIBUTABLE_DISCLOSURE":
+        message = ("The source-mapping cycle is complete, but one or more profiles have no "
+                   "attributable disclosure for the period. Absence is not treated as an exit.")
+    else:
+        message = "Stored disclosures cover the expected reporting period."
     return {
         "status": "FAILED" if ingestion.get("status") == "FAILED" else "SUCCESS",
-        "coverage_status": "CURRENT" if not missing else "ACTION_REQUIRED",
+        "coverage_status": coverage_status,
         "expected_period": period.isoformat(),
         "filing_lag_days": settings.investor_disclosure_lag_days,
         "latest_by_investor": {
@@ -1278,12 +1332,18 @@ def _check_investor_disclosures(db: Session) -> dict:
             ) for profile in profiles
         },
         "missing_investors": missing,
+        "investor_coverage": {
+            profile["id"]: (
+                "CURRENT" if latest_by_investor.get(profile["id"], date.min) >= period
+                else ("PENDING_CYCLE" if remaining_mappings else "NO_ATTRIBUTABLE_DISCLOSURE")
+            ) for profile in profiles
+        },
+        "coverage_progress": {"active_mappings": active_mappings,
+                              "checked_mappings": checked_mappings,
+                              "remaining_mappings": remaining_mappings},
+        "blockers": blockers,
         "ingestion": ingestion,
-        "message": (
-            "Automated exchange discovery completed, but one or more configured investor "
-            "profiles still have no attributable filing for the expected period. Review source "
-            "mappings, parser failures, and pending aliases; CSV remains the recovery path."
-        ) if missing else "Stored disclosures cover the expected reporting period.",
+        "message": message,
     }
 
 
@@ -1386,10 +1446,10 @@ def _run_morning_automation(
     return payload, snapshot
 
 
-def _automation_job_definitions() -> list[dict]:
+def _automation_job_definitions(db: Session) -> list[dict]:
+    config = effective_schedule(db)
     schedule = (
-        f"{settings.analysis_schedule_days} at {settings.analysis_schedule_hour:02d}:"
-        f"{settings.analysis_schedule_minute:02d} {settings.analysis_schedule_timezone}"
+        f"{config.days} at {config.hour:02d}:{config.minute:02d} {config.timezone}"
     )
     return [
         {"id": "market_prices", "name": "Previous-close market prices", "frequency": schedule,
@@ -1418,7 +1478,8 @@ def _automation_job_definitions() -> list[dict]:
     ]
 
 
-def _snapshot_metadata(snapshot: AnalysisSnapshot, mode: str) -> dict:
+def _snapshot_metadata(snapshot: AnalysisSnapshot, mode: str, db: Session) -> dict:
+    config = effective_schedule(db)
     return {
         "mode": mode,
         "generated_at": snapshot.generated_at.isoformat() if snapshot.generated_at else None,
@@ -1426,10 +1487,8 @@ def _snapshot_metadata(snapshot: AnalysisSnapshot, mode: str) -> dict:
         "last_status": snapshot.last_status,
         "last_error": snapshot.last_error,
         "schedule": {
-            "days": settings.analysis_schedule_days,
-            "hour": settings.analysis_schedule_hour,
-            "minute": settings.analysis_schedule_minute,
-            "timezone": settings.analysis_schedule_timezone,
+            "days": config.days, "hour": config.hour, "minute": config.minute,
+            "timezone": config.timezone, "enabled": config.enabled,
         },
     }
 
@@ -1440,12 +1499,12 @@ def stock_workbench(db: Session = Depends(get_db)):
         AnalysisSnapshot.snapshot_key == "stock_workbench"
     ))
     if snapshot and snapshot.payload:
-        return {**snapshot.payload, "snapshot": _snapshot_metadata(snapshot, "CACHED")}
+        return {**snapshot.payload, "snapshot": _snapshot_metadata(snapshot, "CACHED", db)}
 
     # Cold-start recovery only. The scheduler normally creates this before a user opens the UI.
     payload = _build_stock_workbench(db)
     snapshot = _store_workbench_snapshot(db, payload)
-    return {**payload, "snapshot": _snapshot_metadata(snapshot, "COLD_START")}
+    return {**payload, "snapshot": _snapshot_metadata(snapshot, "COLD_START", db)}
 
 
 @app.get("/analysis-schedule")
@@ -1453,7 +1512,8 @@ def analysis_schedule_status(db: Session = Depends(get_db)):
     snapshot = db.scalar(select(AnalysisSnapshot).where(
         AnalysisSnapshot.snapshot_key == "stock_workbench"
     ))
-    definitions = _automation_job_definitions()
+    definitions = _automation_job_definitions(db)
+    config = effective_schedule(db)
     job_snapshots = {
         item.snapshot_key.removeprefix("automation:"): item
         for item in db.scalars(select(AnalysisSnapshot).where(
@@ -1463,7 +1523,7 @@ def analysis_schedule_status(db: Session = Depends(get_db)):
         )).all()
     }
     return {
-        "enabled": True,
+        "enabled": config.enabled,
         "run_on_startup": settings.analysis_run_on_startup,
         "health": schedule_health(db),
         "recovery_policy": {
@@ -1472,12 +1532,8 @@ def analysis_schedule_status(db: Session = Depends(get_db)):
             "catchup_max_hours": settings.analysis_catchup_max_hours,
             "retry_delays_minutes": settings.analysis_retry_delays_minutes,
         },
-        "schedule": {
-            "days": settings.analysis_schedule_days,
-            "hour": settings.analysis_schedule_hour,
-            "minute": settings.analysis_schedule_minute,
-            "timezone": settings.analysis_schedule_timezone,
-        },
+        "schedule": schedule_out(config),
+        "metrics": automation_metrics(db),
         "jobs": [{
             **definition,
             "last_attempted_at": (
@@ -1497,8 +1553,18 @@ def analysis_schedule_status(db: Session = Depends(get_db)):
                 if definition["id"] in job_snapshots else None
             ),
         } for definition in definitions],
-        "snapshot": _snapshot_metadata(snapshot, "CACHED") if snapshot else None,
+        "snapshot": _snapshot_metadata(snapshot, "CACHED", db) if snapshot else None,
     }
+
+
+@app.put("/analysis-schedule")
+def edit_analysis_schedule(payload: AutomationScheduleUpdate, db: Session = Depends(get_db)):
+    try:
+        item = update_schedule(db, enabled=payload.enabled, days=payload.days,
+            hour=payload.hour, minute=payload.minute, timezone_name=payload.timezone)
+    except AutomationConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return schedule_out(item)
 
 
 @app.get("/analysis-schedule/runs")
@@ -1576,7 +1642,7 @@ def force_analysis_run(
         "data_refresh": payload["data_refresh"],
         "failed_actions": failed_actions,
         "run": automation_run_out(run),
-        "snapshot": _snapshot_metadata(snapshot, "FORCED"),
+        "snapshot": _snapshot_metadata(snapshot, "FORCED", db),
     }
 
 
@@ -1819,6 +1885,107 @@ def get_research(instrument_id: int, db: Session = Depends(get_db)):
         "as_of": row.as_of.isoformat(),
         "payload": row.payload,
     } for row in rows]
+
+
+def _document_out(db: Session, document: ResearchDocument) -> dict:
+    section_count = db.scalar(select(func.count()).select_from(ResearchDocumentSection).where(
+        ResearchDocumentSection.document_id == document.id)) or 0
+    latest = db.scalar(select(GroundedDocumentAnalysis).where(
+        GroundedDocumentAnalysis.document_id == document.id).order_by(GroundedDocumentAnalysis.id.desc()))
+    instrument = db.get(Instrument, document.instrument_id)
+    return {"id": document.id, "instrument_id": document.instrument_id,
+        "stock": f"{instrument.exchange}:{instrument.symbol}", "company_name": instrument.company_name,
+        "document_type": document.document_type, "title": document.title,
+        "report_date": document.report_date, "source_url": document.source_url,
+        "filename": document.filename, "content_type": document.content_type,
+        "content_hash": document.content_hash, "page_count": document.page_count,
+        "section_count": section_count, "created_at": document.created_at,
+        "latest_analysis_id": latest.id if latest else None,
+        "analysis_status": latest.status if latest else "NOT_ANALYSED"}
+
+
+@app.post("/documents")
+async def upload_research_document(
+    instrument_id: int = Form(...), document_type: str = Form(...), title: str = Form(...),
+    report_date: date = Form(...), source_url: str | None = Form(None),
+    file: UploadFile = File(...), db: Session = Depends(get_db),
+):
+    if not db.get(Instrument, instrument_id):
+        raise HTTPException(status_code=404, detail="Instrument not found")
+    kind = document_type.strip().upper()
+    if kind not in {"ANNUAL_REPORT", "TRANSCRIPT"}:
+        raise HTTPException(status_code=422, detail="document_type must be ANNUAL_REPORT or TRANSCRIPT")
+    if source_url and not source_url.startswith("https://"):
+        raise HTTPException(status_code=422, detail="Source URL must use HTTPS")
+    content = await file.read(settings.document_max_bytes + 1)
+    if len(content) > settings.document_max_bytes:
+        raise HTTPException(status_code=413, detail="Document exceeds configured upload limit")
+    filename = (file.filename or "document")[:240]
+    content_type = (file.content_type or "application/octet-stream").lower()
+    if not (filename.lower().endswith((".pdf", ".txt")) or content_type in {"application/pdf", "text/plain"}):
+        raise HTTPException(status_code=415, detail="Only PDF and UTF-8 text documents are supported")
+    try:
+        document = store_document(db, instrument_id=instrument_id, document_type=kind,
+            title=title.strip()[:240], report_date=report_date, source_url=source_url or None,
+            filename=filename, content_type=content_type, content=content)
+    except DocumentAnalysisError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return jsonable_encoder(_document_out(db, document))
+
+
+@app.get("/documents")
+def list_research_documents(instrument_id: int | None = None, db: Session = Depends(get_db)):
+    query = select(ResearchDocument).order_by(ResearchDocument.report_date.desc(), ResearchDocument.id.desc())
+    if instrument_id is not None:
+        query = query.where(ResearchDocument.instrument_id == instrument_id)
+    return jsonable_encoder([_document_out(db, item) for item in db.scalars(query).all()])
+
+
+@app.get("/documents/{document_id}/sections")
+def get_document_sections(document_id: int, db: Session = Depends(get_db)):
+    if not db.get(ResearchDocument, document_id):
+        raise HTTPException(status_code=404, detail="Document not found")
+    rows = db.scalars(select(ResearchDocumentSection).where(
+        ResearchDocumentSection.document_id == document_id).order_by(ResearchDocumentSection.section_index)).all()
+    return jsonable_encoder([{"id": row.id, "section_index": row.section_index,
+        "page_number": row.page_number, "heading": row.heading, "text": row.text} for row in rows])
+
+
+@app.post("/documents/{document_id}/analyze")
+def create_document_analysis(document_id: int, payload: DocumentAnalysisRequest,
+                             db: Session = Depends(get_db)):
+    document = db.get(ResearchDocument, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        return jsonable_encoder(analysis_out(db, analyze_document(db, document, payload.force)))
+    except DocumentAnalysisError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/documents/{document_id}/analysis")
+def get_document_analysis(document_id: int, db: Session = Depends(get_db)):
+    analysis = db.scalar(select(GroundedDocumentAnalysis).where(
+        GroundedDocumentAnalysis.document_id == document_id).order_by(GroundedDocumentAnalysis.id.desc()))
+    if not analysis:
+        raise HTTPException(status_code=404, detail="No analysis exists for this document")
+    return jsonable_encoder(analysis_out(db, analysis))
+
+
+@app.post("/document-analyses/{analysis_id}/review")
+def review_document_analysis(analysis_id: int, payload: DocumentReviewDecision,
+                             db: Session = Depends(get_db)):
+    analysis = db.get(GroundedDocumentAnalysis, analysis_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    decision = payload.decision.strip().upper()
+    if decision not in {"ACCEPTED", "REJECTED"}:
+        raise HTTPException(status_code=422, detail="decision must be ACCEPTED or REJECTED")
+    analysis.status = decision
+    analysis.review_note = payload.note
+    analysis.reviewed_at = datetime.utcnow()
+    db.commit(); db.refresh(analysis)
+    return jsonable_encoder(analysis_out(db, analysis))
 
 
 @app.post("/reconcile")

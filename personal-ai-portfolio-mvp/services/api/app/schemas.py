@@ -94,3 +94,20 @@ class AliasReviewDecision(BaseModel):
     decision: str
     investor_id: str | None = None
     note: str | None = None
+
+
+class DocumentAnalysisRequest(BaseModel):
+    force: bool = False
+
+
+class DocumentReviewDecision(BaseModel):
+    decision: str
+    note: str | None = None
+
+
+class AutomationScheduleUpdate(BaseModel):
+    enabled: bool = True
+    days: str = Field(min_length=3, max_length=40)
+    hour: int = Field(ge=0, le=23)
+    minute: int = Field(ge=0, le=59)
+    timezone: str = Field(min_length=1, max_length=80)

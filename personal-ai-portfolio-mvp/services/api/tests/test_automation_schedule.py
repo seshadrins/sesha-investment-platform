@@ -1,6 +1,7 @@
 from datetime import date
 
 from app.automation_schedule import (
+    disclosure_coverage_state,
     latest_disclosure_period_due,
     latest_date_in_payload,
     latest_financial_period_due,
@@ -34,3 +35,12 @@ def test_latest_date_is_found_in_nested_provider_payload():
 
 def test_upstox_month_label_maps_to_period_end():
     assert latest_date_in_payload({"period": "Jun 2026"}) == date(2026, 6, 30)
+
+
+def test_disclosure_coverage_states_distinguish_progress_absence_and_blockers():
+    common = dict(failed_mappings=0, parser_failures=0, pending_aliases=0,
+                  ingestion_enabled=True, missing_investors=15)
+    assert disclosure_coverage_state(remaining_mappings=508, **common) == "IN_PROGRESS"
+    assert disclosure_coverage_state(remaining_mappings=0, **common) == "NO_ATTRIBUTABLE_DISCLOSURE"
+    assert disclosure_coverage_state(remaining_mappings=508, **{**common, "failed_mappings": 1}) == "ACTION_REQUIRED"
+    assert disclosure_coverage_state(remaining_mappings=0, **{**common, "missing_investors": 0}) == "CURRENT"

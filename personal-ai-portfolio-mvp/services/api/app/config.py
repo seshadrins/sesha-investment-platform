@@ -35,7 +35,11 @@ class Settings(BaseSettings):
     ollama_model: str = "qwen2.5:7b-instruct"
     openrouter_api_key: str | None = None
     openrouter_model: str = "google/gemma-4-26b-a4b-it:free"
+    document_max_bytes: int = 25000000
+    document_llm_max_chars: int = 90000
+    document_prompt_version: str = "grounded-analysis-v1"
     notification_webhook_url: str | None = None
+    automation_alerts_enabled: bool = True
     analysis_start_grace_minutes: int = 15
     analysis_stall_minutes: int = 90
     analysis_catchup_max_hours: int = 48

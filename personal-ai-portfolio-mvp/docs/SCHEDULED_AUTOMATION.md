@@ -93,7 +93,8 @@ All times use `ANALYSIS_SCHEDULE_TIMEZONE`.
 | `OLLAMA_MODEL` | `qwen2.5:7b-instruct` | Pinned local structured-output model |
 | `OPENROUTER_API_KEY` | empty | Enables the secondary OpenRouter fallback |
 | `OPENROUTER_MODEL` | `google/gemma-4-26b-a4b-it:free` | Pinned OpenRouter fallback; random routing is rejected |
-| `NOTIFICATION_WEBHOOK_URL` | empty | Optional HTTPS webhook for disclosure notifications |
+| `NOTIFICATION_WEBHOOK_URL` | empty | Optional HTTPS webhook for disclosure and automation notifications |
+| `AUTOMATION_ALERTS_ENABLED` | `true` | Create alerts for unhealthy and recovered scheduled runs |
 | `ANALYSIS_START_GRACE_MINUTES` | `15` | Delay before a non-started expected run becomes missed/overdue |
 | `ANALYSIS_STALL_MINUTES` | `90` | Maximum running time before a run is marked stalled |
 | `ANALYSIS_CATCHUP_MAX_HOURS` | `48` | Maximum age for automatic catch-up after downtime |
@@ -102,6 +103,10 @@ All times use `ANALYSIS_SCHEDULE_TIMEZONE`.
 
 After changing `.env`, rebuild or restart the API and scheduler containers so both processes receive
 the same settings.
+
+The dashboard can persistently override the default days, time, IANA time zone, and enabled state.
+The worker validates and applies this database-backed configuration within 30 seconds, so later
+schedule edits do not require a container restart.
 
 ## Forced runs
 
@@ -134,10 +139,21 @@ bounded retries after 30 and 60 minutes. An all-source disclosure failure is ret
 mappings, parser review, and disclosure `ACTION_REQUIRED` states remain visible for user
 intervention rather than retrying indefinitely.
 
+Disclosure coverage uses four distinct states: `IN_PROGRESS` while active mappings remain unchecked;
+`CURRENT` when the cycle is complete and each configured profile has attributable evidence;
+`NO_ATTRIBUTABLE_DISCLOSURE` when the cycle completed without evidence for one or more profiles; and
+`ACTION_REQUIRED` only for failed mappings, parser failures, pending alias reviews, or disabled
+automated ingestion. Each result includes checked/remaining mapping counts and a per-investor state.
+
 The Compose service has a heartbeat healthcheck, the API reports calculated schedule health, and
 the dashboard displays a prominent recovery banner plus the latest 20 runs. If the entire computer
 or Docker engine is off, no local process can alert while it is off; catch-up begins when the
 scheduler next starts within the configured recovery window.
+
+The dashboard reports rolling 30-day success rate, recovery count, duration percentiles, and
+per-activity attempts and failures. Missed, failed, stalled, partial, and recovered runs create
+durable in-app alerts. When `NOTIFICATION_WEBHOOK_URL` is configured, those alerts use the existing
+retryable HTTPS notification delivery path.
 
 The dashboard continues to serve the last successful workbench snapshot if a rebuild fails.
 Screening results and fundamental evidence are committed company by company, allowing a later run

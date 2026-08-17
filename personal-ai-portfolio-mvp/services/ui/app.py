@@ -9,7 +9,7 @@ st.set_page_config(
     layout="wide",
 )
 
-from common import api_get, api_post, render_sidebar
+from common import api_get, api_post, api_put, render_sidebar
 
 render_sidebar()
 st.title("Personal AI Portfolio Manager")
@@ -18,6 +18,7 @@ st.caption("Review every stock across portfolio, data, financial, style, and fol
 workbench = api_get("/stock-workbench")
 automation = api_get("/analysis-schedule")
 run_history = api_get("/analysis-schedule/runs?limit=20")
+automation_alerts = api_get("/notifications?category=AUTOMATION&limit=20")
 TABLE_HEIGHT = 650
 
 snapshot = workbench["snapshot"]
@@ -79,6 +80,34 @@ with st.expander("Automation schedule and latest status"):
         f"Health: {health['status']} · heartbeat {health['heartbeat_at'] or 'not received'} · "
         f"start grace {health['start_grace_minutes']} min · stall limit {health['stall_minutes']} min"
     )
+    config = automation["schedule"]
+    with st.form("edit_automation_schedule"):
+        enabled = st.checkbox("Scheduled runs enabled", value=config["enabled"])
+        edit_cols = st.columns(4)
+        days = edit_cols[0].text_input("Days", value=config["days"], help="APScheduler syntax, e.g. tue-sat")
+        hour = edit_cols[1].number_input("Hour", 0, 23, int(config["hour"]))
+        minute = edit_cols[2].number_input("Minute", 0, 59, int(config["minute"]))
+        timezone = edit_cols[3].text_input("Time zone", value=config["timezone"])
+        save_schedule = st.form_submit_button("Save schedule")
+    if save_schedule and api_put("/analysis-schedule", json={"enabled": enabled, "days": days,
+            "hour": hour, "minute": minute, "timezone": timezone}):
+        st.success("Schedule saved. The worker will apply it within 30 seconds."); st.rerun()
+
+with st.expander("Automation metrics and alerts"):
+    metrics = automation["metrics"]
+    metric_cols = st.columns(5)
+    metric_cols[0].metric("Runs (30d)", metrics["runs"])
+    metric_cols[1].metric("Success rate", f"{metrics['success_rate_pct']:.1f}%" if metrics["success_rate_pct"] is not None else "—")
+    metric_cols[2].metric("Recovery runs", metrics["recovery_runs"])
+    metric_cols[3].metric("Median duration", f"{metrics['duration_seconds']['p50']:.1f}s" if metrics["duration_seconds"]["p50"] is not None else "—")
+    metric_cols[4].metric("95th percentile", f"{metrics['duration_seconds']['p95']:.1f}s" if metrics["duration_seconds"]["p95"] is not None else "—")
+    if metrics["activities"]:
+        st.dataframe(pd.DataFrame([{"Activity": name, **values} for name, values in metrics["activities"].items()]), width="stretch", hide_index=True)
+    if not automation_alerts:
+        st.info("No automation alerts have been recorded.")
+    for alert in automation_alerts:
+        st.markdown(f"**{alert['title']}** — {alert['message']}")
+        st.caption(f"{alert['created_at']} · {alert['severity']} · external delivery {alert['delivery_status']}")
 
 with st.expander("Automation run history"):
     history_rows = [{
@@ -128,6 +157,10 @@ for key, label in (
     if result:
         detail = result.get("processed", result.get("constituents", ""))
         suffix = f" · {detail} processed" if detail != "" else ""
+        if key == "investor_disclosures" and result.get("coverage_status"):
+            progress = result.get("coverage_progress", {})
+            suffix += (f" · coverage {result['coverage_status']} · "
+                       f"{progress.get('checked_mappings', 0)}/{progress.get('active_mappings', 0)} mappings")
         st.caption(f"{label}: {result.get('status', 'UNKNOWN')}{suffix}")
 
 

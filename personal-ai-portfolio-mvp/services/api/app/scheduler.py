@@ -18,6 +18,7 @@ from .config import settings
 from .database import Base, SessionLocal, apply_additive_migrations, engine
 from .main import _record_workbench_failure, _run_analysis_pipeline, _run_morning_automation
 from .models import AutomationRun
+from .automation_config import effective_schedule
 from .schedule_health import retry_delays
 
 
@@ -27,6 +28,35 @@ logging.basicConfig(
 )
 logger = logging.getLogger("analysis_scheduler")
 scheduler: BlockingScheduler | None = None
+schedule_signature: tuple | None = None
+
+
+def reload_schedule() -> None:
+    global schedule_signature
+    if not scheduler:
+        return
+    db = SessionLocal()
+    try:
+        config = effective_schedule(db)
+        signature = (config.enabled, config.days, config.hour, config.minute, config.timezone,
+                     config.updated_at.isoformat())
+        if signature == schedule_signature:
+            return
+        existing = scheduler.get_job("morning_portfolio_automation")
+        if existing:
+            scheduler.remove_job("morning_portfolio_automation")
+        if config.enabled:
+            scheduler.add_job(execute_automation_run, trigger="cron", day_of_week=config.days,
+                hour=config.hour, minute=config.minute, timezone=config.timezone,
+                id="morning_portfolio_automation", replace_existing=True, coalesce=True,
+                max_instances=1, misfire_grace_time=settings.analysis_catchup_max_hours * 3600)
+        schedule_signature = signature
+        logger.info("Applied schedule configuration: enabled=%s %s %02d:%02d %s",
+                    config.enabled, config.days, config.hour, config.minute, config.timezone)
+    except Exception:
+        db.rollback(); logger.exception("Could not reload schedule configuration")
+    finally:
+        db.close()
 
 
 def refresh_stock_workbench() -> None:
@@ -99,7 +129,7 @@ def execute_automation_run(
 ) -> None:
     db = SessionLocal()
     run = None
-    scheduled_for = scheduled_for or expected_scheduled_for()
+    scheduled_for = scheduled_for or expected_scheduled_for(db=db)
     try:
         run, created = begin_run(db, scheduled_for, trigger, attempt)
         if not created:
@@ -165,7 +195,10 @@ def check_and_recover() -> bool:
         stalled_ids = mark_stalled_runs(db)
         if stalled_ids:
             logger.error("Marked stalled automation runs: %s", stalled_ids)
-        expected = expected_scheduled_for()
+        config = effective_schedule(db)
+        if not config.enabled:
+            return False
+        expected = expected_scheduled_for(db=db)
         age = datetime.utcnow() - expected
         if age < timedelta(minutes=settings.analysis_start_grace_minutes):
             return False
@@ -239,18 +272,7 @@ def main() -> None:
     Base.metadata.create_all(bind=engine)
     apply_additive_migrations()
     scheduler = BlockingScheduler(timezone=settings.analysis_schedule_timezone)
-    scheduler.add_job(
-        execute_automation_run,
-        trigger="cron",
-        day_of_week=settings.analysis_schedule_days,
-        hour=settings.analysis_schedule_hour,
-        minute=settings.analysis_schedule_minute,
-        id="morning_portfolio_automation",
-        replace_existing=True,
-        coalesce=True,
-        max_instances=1,
-        misfire_grace_time=settings.analysis_catchup_max_hours * 3600,
-    )
+    reload_schedule()
     scheduler.add_job(
         heartbeat, trigger="interval", seconds=settings.scheduler_heartbeat_seconds,
         id="scheduler_heartbeat", replace_existing=True, coalesce=True, max_instances=1,
@@ -258,6 +280,10 @@ def main() -> None:
     scheduler.add_job(
         check_and_recover, trigger="interval", minutes=5,
         id="automation_watchdog", replace_existing=True, coalesce=True, max_instances=1,
+    )
+    scheduler.add_job(
+        reload_schedule, trigger="interval", seconds=30,
+        id="schedule_config_reload", replace_existing=True, coalesce=True, max_instances=1,
     )
     heartbeat()
     recovery_scheduled = check_and_recover()
