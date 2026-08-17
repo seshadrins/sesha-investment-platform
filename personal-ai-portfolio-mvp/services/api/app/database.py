@@ -44,6 +44,15 @@ def apply_additive_migrations() -> None:
                 "ALTER TABLE grounded_document_analyses ADD COLUMN IF NOT EXISTS "
                 "omitted_section_count INTEGER NOT NULL DEFAULT 0"
             ))
+        if "notional_portfolios" in tables:
+            connection.execute(text(
+                "ALTER TABLE notional_portfolios ADD COLUMN IF NOT EXISTS "
+                "tax_pct NUMERIC(10,6) NOT NULL DEFAULT 0"
+            ))
+            connection.execute(text(
+                "ALTER TABLE notional_portfolios ADD COLUMN IF NOT EXISTS "
+                "reinvest_dividends BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
 
 
 def get_db():

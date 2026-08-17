@@ -142,7 +142,7 @@ def execute_automation_run(
         payload, snapshot = _run_morning_automation(db, only_actions=only_actions)
         action_ids = only_actions or {
             "market_prices", "nifty500_constituents", "financial_statements",
-            "nifty500_screening", "investor_disclosures",
+            "nifty500_screening", "investor_disclosures", "notional_settlement", "ipo_lifecycle",
         }
         action_status = {
             name: payload["data_refresh"].get(name, {}).get("status", "UNKNOWN")
@@ -173,7 +173,7 @@ def execute_automation_run(
             logger.exception("Could not record workbench failure")
         _schedule_retry(scheduled_for, attempt, only_actions or {
             "market_prices", "nifty500_constituents", "financial_statements",
-            "nifty500_screening", "investor_disclosures",
+            "nifty500_screening", "investor_disclosures", "notional_settlement", "ipo_lifecycle",
         })
     finally:
         db.close()
@@ -237,7 +237,7 @@ def check_and_recover() -> bool:
             failed = {name for name, status in (latest.action_status or {}).items()
                       if status == "FAILED"} or {
                 "market_prices", "nifty500_constituents", "financial_statements",
-                "nifty500_screening", "investor_disclosures",
+                "nifty500_screening", "investor_disclosures", "notional_settlement", "ipo_lifecycle",
             }
             scheduler.add_job(
                 execute_automation_run, trigger="date",

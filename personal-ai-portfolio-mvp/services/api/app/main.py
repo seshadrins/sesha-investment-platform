@@ -17,6 +17,9 @@ from .models import (
     AppNotification,
     AutomationRun,
     AutomationScheduleConfig,
+    NotionalPortfolio,
+    NotionalTransaction,
+    IPOIssue, IPODocument, IPODocumentSection, IPOAnalysis,
     DecisionJournal,
     DisclosureSourceMapping,
     DisclosureDocument,
@@ -45,6 +48,10 @@ from .schemas import (
     DocumentAnalysisRequest,
     DocumentReviewDecision,
     AutomationScheduleUpdate,
+    NotionalPortfolioCreate,
+    NotionalTradeCreate,
+    NotionalCashCreate,
+    IPOIssueCreate, IPOIssueUpdate, IPOAnalysisRequest, IPOAnalysisReview,
     DisclosureSourceMappingUpsert,
     InstrumentCreate,
     InstrumentOut,
@@ -116,6 +123,15 @@ from .screening import (
 from .document_analysis import (
     DocumentAnalysisError, analysis_out, analyze_document, store_document,
 )
+from .notional_portfolio import (
+    NotionalPortfolioError, create_cash_transaction, create_trade,
+    performance_history as notional_performance_history,
+    recommendation_learning as notional_recommendation_learning,
+    portfolio_snapshot as notional_portfolio_snapshot,
+    settle_pending_orders, transaction_out as notional_transaction_out,
+)
+from .ipo_lifecycle import (IPOError, STAGES, analyze_ipo, discover_sebi_ipos,
+    normalize_name, post_listing_monitor, store_ipo_document)
 
 app = FastAPI(
     title="Personal AI Portfolio Manager API",
@@ -1347,6 +1363,16 @@ def _check_investor_disclosures(db: Session) -> dict:
     }
 
 
+def _refresh_ipo_lifecycle(db: Session) -> dict:
+    discovery = discover_sebi_ipos(db) if settings.ipo_discovery_enabled else {"status": "SKIPPED"}
+    monitored = 0
+    for issue in db.scalars(select(IPOIssue).where(
+        IPOIssue.stage.in_(["LISTED", "POST_LISTING_MONITORING"]))).all():
+        post_listing_monitor(db, issue); monitored += 1
+    return {"status": discovery.get("status", "SUCCESS"), "discovery": discovery,
+            "post_listing_monitored": monitored}
+
+
 def _refresh_analysis_market_data(db: Session) -> dict:
     target_date = date.today() - timedelta(days=1)
     if not settings.upstox_token:
@@ -1405,7 +1431,7 @@ def _run_automation_action(db: Session, job_id: str, action) -> dict:
 def _latest_automation_results(db: Session) -> dict:
     job_ids = (
         "market_prices", "nifty500_constituents", "financial_statements",
-        "nifty500_screening", "investor_disclosures",
+        "nifty500_screening", "investor_disclosures", "notional_settlement", "ipo_lifecycle",
     )
     rows = db.scalars(select(AnalysisSnapshot).where(
         AnalysisSnapshot.snapshot_key.in_([f"automation:{job_id}" for job_id in job_ids])
@@ -1419,6 +1445,8 @@ def _run_morning_automation(
     """Run all due activities, or only failed activities during a bounded retry."""
     action_functions = {
         "market_prices": lambda: _refresh_analysis_market_data(db),
+        "notional_settlement": lambda: {"status": "SUCCESS", **settle_pending_orders(db)},
+        "ipo_lifecycle": lambda: _refresh_ipo_lifecycle(db),
         "nifty500_constituents": lambda: _refresh_universe_if_due(db),
         "financial_statements": lambda: _refresh_due_financial_statements(db),
         "nifty500_screening": lambda: _screen_universe_batch(
@@ -1454,6 +1482,10 @@ def _automation_job_definitions(db: Session) -> list[dict]:
     return [
         {"id": "market_prices", "name": "Previous-close market prices", "frequency": schedule,
          "policy": "Latest Upstox close on or before the preceding calendar day."},
+        {"id": "notional_settlement", "name": "Pending notional trades", "frequency": schedule,
+         "policy": "Execute only against the first stored close on or after each decision's target date."},
+        {"id": "ipo_lifecycle", "name": "IPO discovery and lifecycle", "frequency": schedule,
+         "policy": "Discover official SEBI public-issue filings and refresh listed IPO milestones through day 365."},
         {"id": "nifty500_constituents", "name": "NIFTY 500 membership", "frequency": schedule,
          "policy": f"Refresh on the first scheduled run after months {settings.universe_schedule_months}."},
         {"id": "financial_statements", "name": "Owned/prospective financial statements",
@@ -1654,6 +1686,11 @@ def _upstox_instruments(db: Session) -> tuple[list[ProviderInstrument], list[str
     prospective_ids = set(db.scalars(select(WatchlistItem.instrument_id).where(
         WatchlistItem.status == "ACTIVE"
     )).all())
+    notional_ids = set(db.scalars(select(NotionalTransaction.instrument_id).where(
+        NotionalTransaction.instrument_id.is_not(None),
+        NotionalTransaction.status.in_(["PENDING_PRICE", "EXECUTED"])
+    )).all())
+    prospective_ids.update(notional_ids)
     hidden_ids = candidate_ids - owned_ids - prospective_ids
     query = select(Instrument).order_by(Instrument.exchange, Instrument.symbol)
     if hidden_ids:
@@ -1902,6 +1939,243 @@ def _document_out(db: Session, document: ResearchDocument) -> dict:
         "section_count": section_count, "created_at": document.created_at,
         "latest_analysis_id": latest.id if latest else None,
         "analysis_status": latest.status if latest else "NOT_ANALYSED"}
+
+
+def _ipo_out(db: Session, item: IPOIssue) -> dict:
+    latest = db.scalar(select(IPOAnalysis).where(IPOAnalysis.ipo_id == item.id).order_by(IPOAnalysis.id.desc()))
+    return {"id": item.id, "company_name": item.company_name, "cin": item.cin, "isin": item.isin,
+        "board": item.board, "stage": item.stage, "symbol": item.symbol, "exchange": item.exchange,
+        "instrument_id": item.instrument_id, "discovered_on": item.discovered_on,
+        "drhp_date": item.drhp_date, "rhp_date": item.rhp_date,
+        "issue_open_date": item.issue_open_date, "issue_close_date": item.issue_close_date,
+        "listing_date": item.listing_date, "price_band_low": item.price_band_low,
+        "price_band_high": item.price_band_high, "issue_price": item.issue_price,
+        "lot_size": item.lot_size, "fresh_issue_amount": item.fresh_issue_amount,
+        "ofs_amount": item.ofs_amount, "source_url": item.source_url, "source_type": item.source_type,
+        "analysis_outcome": latest.outcome if latest else None, "analysis_status": latest.status if latest else None}
+
+
+@app.post("/ipos/discover")
+def discover_ipos(db: Session = Depends(get_db)):
+    try: return discover_sebi_ipos(db)
+    except IPOError as exc: raise HTTPException(502, str(exc)) from exc
+
+
+@app.post("/ipos")
+def create_ipo(payload: IPOIssueCreate, db: Session = Depends(get_db)):
+    if not payload.source_url.startswith("https://"): raise HTTPException(422, "Source URL must use HTTPS.")
+    key = normalize_name(payload.company_name)
+    existing = db.scalar(select(IPOIssue).where(IPOIssue.normalized_name == key))
+    if existing: return jsonable_encoder(_ipo_out(db, existing))
+    item = IPOIssue(**payload.model_dump(), normalized_name=key, stage="DISCOVERED", source_type="MANUAL_OFFICIAL")
+    db.add(item); db.commit(); db.refresh(item); return jsonable_encoder(_ipo_out(db, item))
+
+
+@app.get("/ipos")
+def list_ipos(stage: str | None = None, board: str | None = None, db: Session = Depends(get_db)):
+    query = select(IPOIssue).order_by(IPOIssue.discovered_on.desc(), IPOIssue.company_name)
+    if stage: query = query.where(IPOIssue.stage == stage.upper())
+    if board: query = query.where(IPOIssue.board == board.upper())
+    return jsonable_encoder([_ipo_out(db, item) for item in db.scalars(query).all()])
+
+
+@app.patch("/ipos/{ipo_id}")
+def update_ipo(ipo_id: int, payload: IPOIssueUpdate, db: Session = Depends(get_db)):
+    item = db.get(IPOIssue, ipo_id)
+    if not item: raise HTTPException(404, "IPO not found.")
+    values = payload.model_dump(exclude_none=True)
+    if "stage" in values and values["stage"].upper() not in {*STAGES, "WITHDRAWN", "POSTPONED", "EXPIRED", "LISTING_CANCELLED"}:
+        raise HTTPException(422, "Invalid lifecycle stage.")
+    for key, value in values.items(): setattr(item, key, value.upper() if key in {"stage", "board", "exchange"} else value)
+    db.commit(); db.refresh(item); return jsonable_encoder(_ipo_out(db, item))
+
+
+@app.post("/ipos/{ipo_id}/documents")
+async def upload_ipo_document(ipo_id: int, document_type: str = Form(...), document_date: date = Form(...),
+        title: str = Form(...), source_url: str = Form(...), file: UploadFile = File(...),
+        db: Session = Depends(get_db)):
+    issue = db.get(IPOIssue, ipo_id)
+    if not issue: raise HTTPException(404, "IPO not found.")
+    content = await file.read(settings.document_max_bytes + 1)
+    if len(content) > settings.document_max_bytes: raise HTTPException(413, "Document exceeds upload limit.")
+    try: doc = store_ipo_document(db, issue, document_type=document_type, document_date=document_date,
+                                  title=title, source_url=source_url, content=content)
+    except IPOError as exc: raise HTTPException(422, str(exc)) from exc
+    return {"id": doc.id, "page_count": doc.page_count, "content_hash": doc.content_hash}
+
+
+@app.get("/ipos/{ipo_id}/documents")
+def ipo_documents(ipo_id: int, db: Session = Depends(get_db)):
+    rows = db.scalars(select(IPODocument).where(IPODocument.ipo_id == ipo_id).order_by(IPODocument.document_date.desc())).all()
+    return jsonable_encoder([{"id": x.id, "document_type": x.document_type, "document_date": x.document_date,
+        "title": x.title, "source_url": x.source_url, "page_count": x.page_count} for x in rows])
+
+
+@app.post("/ipos/{ipo_id}/documents/{document_id}/analyze")
+def analyze_ipo_document(ipo_id: int, document_id: int, payload: IPOAnalysisRequest, db: Session = Depends(get_db)):
+    issue, doc = db.get(IPOIssue, ipo_id), db.get(IPODocument, document_id)
+    if not issue or not doc or doc.ipo_id != ipo_id: raise HTTPException(404, "IPO document not found.")
+    existing = db.scalar(select(IPOAnalysis).where(IPOAnalysis.document_id == document_id).order_by(IPOAnalysis.id.desc()))
+    if existing and not payload.force: return jsonable_encoder(_ipo_analysis_out(db, existing))
+    try: return jsonable_encoder(_ipo_analysis_out(db, analyze_ipo(db, issue, doc)))
+    except IPOError as exc: raise HTTPException(422, str(exc)) from exc
+
+
+def _ipo_analysis_out(db: Session, item: IPOAnalysis) -> dict:
+    ids = set()
+    for value in item.payload.values():
+        if isinstance(value, dict): ids.update(value.get("section_ids", []))
+        elif isinstance(value, list):
+            for claim in value:
+                if isinstance(claim, dict): ids.update(claim.get("section_ids", []))
+    sections = db.scalars(select(IPODocumentSection).where(IPODocumentSection.id.in_(ids))).all() if ids else []
+    return {"id": item.id, "ipo_id": item.ipo_id, "document_id": item.document_id,
+        "outcome": item.outcome, "status": item.status, "payload": item.payload,
+        "provider": item.provider, "model": item.model, "prompt_version": item.prompt_version,
+        "review_note": item.review_note, "citations": {str(s.id): {"page_number": s.page_number,
+            "heading": s.heading, "excerpt": s.text[:1200]} for s in sections}}
+
+
+@app.get("/ipos/{ipo_id}/analysis")
+def get_ipo_analysis(ipo_id: int, db: Session = Depends(get_db)):
+    item = db.scalar(select(IPOAnalysis).where(IPOAnalysis.ipo_id == ipo_id).order_by(IPOAnalysis.id.desc()))
+    if not item: raise HTTPException(404, "No IPO analysis exists.")
+    return jsonable_encoder(_ipo_analysis_out(db, item))
+
+
+@app.post("/ipo-analyses/{analysis_id}/review")
+def review_ipo_analysis(analysis_id: int, payload: IPOAnalysisReview, db: Session = Depends(get_db)):
+    item = db.get(IPOAnalysis, analysis_id)
+    if not item: raise HTTPException(404, "IPO analysis not found.")
+    decision = payload.decision.upper()
+    if decision not in {"ACCEPTED", "REJECTED"}: raise HTTPException(422, "Decision must be ACCEPTED or REJECTED.")
+    item.status, item.review_note = decision, payload.note; db.commit(); db.refresh(item)
+    return jsonable_encoder(_ipo_analysis_out(db, item))
+
+
+@app.get("/ipos/{ipo_id}/monitoring")
+def ipo_monitoring(ipo_id: int, db: Session = Depends(get_db)):
+    item = db.get(IPOIssue, ipo_id)
+    if not item: raise HTTPException(404, "IPO not found.")
+    return jsonable_encoder(post_listing_monitor(db, item))
+
+
+def _notional_portfolio_out(item: NotionalPortfolio) -> dict:
+    return {"id": item.id, "name": item.name, "currency": item.currency,
+        "starting_cash": item.starting_cash, "max_position_weight": item.max_position_weight,
+        "brokerage_pct": item.brokerage_pct, "tax_pct": item.tax_pct,
+        "slippage_pct": item.slippage_pct, "reinvest_dividends": item.reinvest_dividends,
+        "benchmark_instrument_id": item.benchmark_instrument_id, "active": item.active,
+        "created_at": item.created_at, "updated_at": item.updated_at}
+
+
+@app.post("/notional-portfolios")
+def create_notional_portfolio(payload: NotionalPortfolioCreate, db: Session = Depends(get_db)):
+    if payload.benchmark_instrument_id and not db.get(Instrument, payload.benchmark_instrument_id):
+        raise HTTPException(404, "Benchmark instrument not found.")
+    item = NotionalPortfolio(**payload.model_dump())
+    db.add(item)
+    try: db.commit()
+    except Exception as exc:
+        db.rollback(); raise HTTPException(409, "A notional portfolio with this name already exists.") from exc
+    db.refresh(item)
+    return jsonable_encoder(_notional_portfolio_out(item))
+
+
+@app.get("/notional-portfolios")
+def list_notional_portfolios(db: Session = Depends(get_db)):
+    return jsonable_encoder([_notional_portfolio_out(item) for item in db.scalars(
+        select(NotionalPortfolio).where(NotionalPortfolio.active.is_(True)).order_by(NotionalPortfolio.name)).all()])
+
+
+@app.get("/notional-portfolios/candidates")
+def notional_candidates(db: Session = Depends(get_db)):
+    workbench = _build_stock_workbench(db)
+    rows = []
+    for scope, candidates in (("OWNED", workbench["owned"]), ("RECOMMENDED", workbench["prospective"])):
+        for row in candidates:
+            rows.append({"instrument_id": row["instrument_id"], "stock": f"{row['exchange']}:{row['symbol']}",
+                "company_name": row["company_name"], "scope": scope,
+                "recommendation": row["summary"]["recommendation"],
+                "recommendation_snapshot": {"recommendation": row["summary"]["recommendation"],
+                    "brief_reason": row["summary"]["brief_reason"],
+                    "style_matches": row["summary"]["style_matches"],
+                    "financial_score": row["financials"]["overall_score"],
+                    "financial_evidence_date": row["financials"]["as_of"],
+                    "governance_flags": row["financials"]["governance_flags"],
+                    "investor_corroboration_count": len(row["investors"]),
+                    "price_date": row["portfolio"]["price_date"]}})
+    return jsonable_encoder(sorted(rows, key=lambda item: (item["scope"], item["stock"])))
+
+
+@app.get("/notional-portfolios/{portfolio_id}")
+def get_notional_portfolio(portfolio_id: int, db: Session = Depends(get_db)):
+    item = db.get(NotionalPortfolio, portfolio_id)
+    if not item: raise HTTPException(404, "Notional portfolio not found.")
+    return jsonable_encoder(notional_portfolio_snapshot(db, item))
+
+
+@app.post("/notional-portfolios/{portfolio_id}/trades")
+def place_notional_trade(portfolio_id: int, payload: NotionalTradeCreate,
+                         db: Session = Depends(get_db)):
+    portfolio = db.get(NotionalPortfolio, portfolio_id)
+    if not portfolio: raise HTTPException(404, "Notional portfolio not found.")
+    candidates = {item["instrument_id"]: item for item in notional_candidates(db)}
+    current = notional_portfolio_snapshot(db, portfolio)
+    existing_ids = {item["instrument_id"] for item in current["holdings"]}
+    if payload.action.strip().upper() == "BUY" and payload.instrument_id not in candidates and payload.instrument_id not in existing_ids:
+        raise HTTPException(422, "Stock must be owned or currently recommended before its first notional buy.")
+    recommendation = candidates.get(payload.instrument_id, {}).get("recommendation_snapshot")
+    try:
+        tx = create_trade(db, portfolio, payload.instrument_id, payload.action,
+            payload.quantity, payload.amount, payload.user_reason, recommendation)
+    except NotionalPortfolioError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return jsonable_encoder(notional_transaction_out(db, tx))
+
+
+@app.post("/notional-portfolios/{portfolio_id}/cash")
+def adjust_notional_cash(portfolio_id: int, payload: NotionalCashCreate,
+                         db: Session = Depends(get_db)):
+    portfolio = db.get(NotionalPortfolio, portfolio_id)
+    if not portfolio: raise HTTPException(404, "Notional portfolio not found.")
+    try:
+        if (payload.action.strip().upper() == "DIVIDEND" and portfolio.reinvest_dividends
+                and not payload.instrument_id):
+            raise NotionalPortfolioError("A holding is required when dividend reinvestment is enabled.")
+        tx = create_cash_transaction(db, portfolio, payload.action, payload.amount, payload.user_reason)
+        if payload.action.strip().upper() == "DIVIDEND" and portfolio.reinvest_dividends:
+            create_trade(db, portfolio, payload.instrument_id, "BUY", None, payload.amount,
+                         "Automatic reinvestment of recorded dividend", None)
+    except NotionalPortfolioError as exc: raise HTTPException(422, str(exc)) from exc
+    return jsonable_encoder(notional_transaction_out(db, tx))
+
+
+@app.post("/notional-portfolios/{portfolio_id}/settle")
+def settle_notional_portfolio(portfolio_id: int, db: Session = Depends(get_db)):
+    if not db.get(NotionalPortfolio, portfolio_id): raise HTTPException(404, "Notional portfolio not found.")
+    return settle_pending_orders(db, portfolio_id)
+
+
+@app.get("/notional-portfolios/{portfolio_id}/transactions")
+def notional_transactions(portfolio_id: int, db: Session = Depends(get_db)):
+    rows = db.scalars(select(NotionalTransaction).where(
+        NotionalTransaction.portfolio_id == portfolio_id).order_by(NotionalTransaction.id.desc())).all()
+    return jsonable_encoder([notional_transaction_out(db, item) for item in rows])
+
+
+@app.get("/notional-portfolios/{portfolio_id}/performance")
+def notional_performance(portfolio_id: int, db: Session = Depends(get_db)):
+    portfolio = db.get(NotionalPortfolio, portfolio_id)
+    if not portfolio: raise HTTPException(404, "Notional portfolio not found.")
+    return jsonable_encoder(notional_performance_history(db, portfolio))
+
+
+@app.get("/notional-portfolios/{portfolio_id}/learning")
+def notional_learning(portfolio_id: int, db: Session = Depends(get_db)):
+    portfolio = db.get(NotionalPortfolio, portfolio_id)
+    if not portfolio: raise HTTPException(404, "Notional portfolio not found.")
+    return jsonable_encoder(notional_recommendation_learning(db, portfolio))
 
 
 @app.post("/documents")

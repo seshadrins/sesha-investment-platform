@@ -18,8 +18,8 @@ Last reconciled with the running application: **2026-08-17**.
 | 5 | Followed-investor disclosure signals | Implemented; official-source ingestion, validated parser fallbacks, alias review, and notifications are operational |
 | 6 | Grounded annual-report/transcript analysis | Implemented |
 | 7 | Scheduled analysis, monitoring, and notifications | Implemented |
-| 8 | Notional portfolio, portfolio-level backtesting, and learning | Planned |
-| 9 | IPO lifecycle analysis before listing and through the first listed year | Planned |
+| 8 | Notional portfolio, portfolio-level backtesting, and learning | Implemented |
+| 9 | IPO lifecycle analysis before listing and through the first listed year | Implemented |
 
 ## Current verified release snapshot
 
@@ -275,12 +275,12 @@ Implemented boundaries:
 
 ## Phase 8 — notional portfolio, backtesting, and learning
 
-Status: planned. Add a separate top-level **Notional Portfolio** tab with an independent cash and
+Status: implemented. A separate **Notional Portfolio** page has an independent cash and
 transaction ledger. The user can add or remove stocks notionally, including accepting a dated
 recommendation as a proposed notional trade, without changing actual holdings. Actual portfolio
 changes continue to arrive through manual transactions or periodic broker uploads and reconciliation.
 
-Planned notional-portfolio controls and views:
+Implemented notional-portfolio controls and views:
 
 - Configurable starting cash, position size, maximum allocation, transaction costs, taxes/slippage,
   and reinvestment policy.
@@ -298,7 +298,10 @@ Planned notional-portfolio controls and views:
 - Clear labelling that notional results are simulated and may differ from executable prices,
   liquidity, taxes, and the user's real portfolio constraints.
 
-Extend the existing Phase 4 single-stock style backtests with immutable recommendation snapshots:
+Every simulated buy retains an immutable recommendation/evidence snapshot. Portfolio history
+reports contribution-adjusted total return, time-weighted return, money-weighted return when the
+cash-flow dates permit it, drawdown, and an optional normalized benchmark. Recommendation learning
+evaluates the following dimensions without filling future horizons with guessed prices:
 
 - Forward 3/6/12-month return.
 - Maximum adverse and favourable excursion.
@@ -309,12 +312,17 @@ Extend the existing Phase 4 single-stock style backtests with immutable recommen
 
 ## Phase 9 — IPO lifecycle analysis
 
+Status: implemented. The separate IPO workspace discovers equity offer-document records from
+SEBI's official public-issues registry, retains official source provenance, separates Mainboard and
+SME issues, supports official PDF recovery imports, produces schema-validated cited research
+drafts, and monitors linked listed instruments through the first 365 days.
+
 Status: planned. IPOs will use a separate top-level **IPOs** tab because pre-listing evidence and
 first-year uncertainty are not comparable to the mature-company evidence used by Owned and
 Prospective Stocks. The tab will contain **Pre-IPO** and **Post-listing (0–12 months)** views; after
 the first listed year, an eligible company graduates into the normal owned/prospective workflow.
 
-Planned pre-IPO evidence and workflow:
+Implemented pre-IPO evidence and workflow:
 
 - Official DRHP, RHP, addenda, exchange notices, price band, lot size, timetable, and issue status.
 - Fresh-issue versus offer-for-sale split, proposed use of proceeds, promoter dilution and lock-ins.
@@ -328,7 +336,7 @@ Planned pre-IPO evidence and workflow:
   or listing notice becomes available. Unofficial grey-market premiums will not be treated as
   authoritative evidence.
 
-Planned post-listing workflow for the first 12 months:
+Implemented post-listing workflow for the first 12 months:
 
 - Daily closes from listing day and transparent return comparisons against issue price and a broad
   benchmark; no long-history technical conclusions when the sample is insufficient.

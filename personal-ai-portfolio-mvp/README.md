@@ -79,6 +79,20 @@ catalysts, risks, and invalidation conditions remain drafts until accepted or re
 they never modify a thesis or recommendation automatically. Image-only PDFs must be OCRed before
 import. Configure limits with `DOCUMENT_MAX_BYTES` and `DOCUMENT_LLM_MAX_CHARS`.
 
+Phase 8 adds an entirely separate **Notional Portfolio** simulated ledger. Users can notionally buy
+owned or currently recommended stocks, add to or sell existing notional holdings, adjust cash, and
+record dividends without affecting actual accounts or placing an order. Trades execute only against
+the first stored close observable on or after the decision's target date; otherwise they remain
+pending. FIFO lots, costs, slippage, allocation limits, immutable recommendation snapshots, total/
+time-weighted/money-weighted return, drawdown, and optional normalized benchmark history are shown.
+
+Phase 9 adds a separate **IPOs** workspace. Daily automation discovers DRHP/RHP/prospectus records
+from SEBI's official public-issues registry; users can reconcile Mainboard/SME metadata and import
+official offer-document PDFs. Ollama-first cited drafts extract offer structure, proceeds, financial
+quality, related parties, litigation/auditor matters, risks, peers, valuation evidence, and catalysts
+into reviewable `AVOID`, `WATCH`, or `CONSIDER` outcomes. Once linked to a listed instrument, stored
+closes drive issue-price returns, drawdown, and 30/90/180/365-day reviews before graduation.
+
 ## Prerequisites on Windows
 
 1. Windows 10/11 with WSL 2 enabled.

@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     document_max_bytes: int = 25000000
     document_llm_max_chars: int = 90000
     document_prompt_version: str = "grounded-analysis-v1"
+    ipo_discovery_enabled: bool = True
     notification_webhook_url: str | None = None
     automation_alerts_enabled: bool = True
     analysis_start_grace_minutes: int = 15

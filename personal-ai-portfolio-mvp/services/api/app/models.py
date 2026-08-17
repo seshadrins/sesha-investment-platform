@@ -417,3 +417,115 @@ class GroundedDocumentAnalysis(Base):
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class NotionalPortfolio(Base):
+    __tablename__ = "notional_portfolios"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    currency: Mapped[str] = mapped_column(String(8), default="INR")
+    starting_cash: Mapped[Decimal] = mapped_column(Numeric(20, 4))
+    max_position_weight: Mapped[Decimal] = mapped_column(Numeric(8, 6), default=Decimal("0.15"))
+    brokerage_pct: Mapped[Decimal] = mapped_column(Numeric(10, 6), default=Decimal("0"))
+    tax_pct: Mapped[Decimal] = mapped_column(Numeric(10, 6), default=Decimal("0"))
+    slippage_pct: Mapped[Decimal] = mapped_column(Numeric(10, 6), default=Decimal("0"))
+    reinvest_dividends: Mapped[bool] = mapped_column(default=False)
+    benchmark_instrument_id: Mapped[int | None] = mapped_column(ForeignKey("instruments.id"), nullable=True)
+    active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class NotionalTransaction(Base):
+    __tablename__ = "notional_transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    portfolio_id: Mapped[int] = mapped_column(ForeignKey("notional_portfolios.id"), index=True)
+    instrument_id: Mapped[int | None] = mapped_column(ForeignKey("instruments.id"), nullable=True, index=True)
+    transaction_type: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(24), default="PENDING_PRICE", index=True)
+    decision_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    target_price_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    execution_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(20, 6), default=0)
+    requested_amount: Mapped[Decimal | None] = mapped_column(Numeric(20, 4), nullable=True)
+    execution_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 4), nullable=True)
+    charges: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=0)
+    recommendation_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    user_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class IPOIssue(Base):
+    __tablename__ = "ipo_issues"
+    __table_args__ = (UniqueConstraint("normalized_name", name="uq_ipo_normalized_name"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_name: Mapped[str] = mapped_column(String(240))
+    normalized_name: Mapped[str] = mapped_column(String(240), index=True)
+    cin: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    isin: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    board: Mapped[str] = mapped_column(String(20), default="UNCLASSIFIED")
+    stage: Mapped[str] = mapped_column(String(40), default="DISCOVERED", index=True)
+    symbol: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    exchange: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    instrument_id: Mapped[int | None] = mapped_column(ForeignKey("instruments.id"), nullable=True)
+    discovered_on: Mapped[date] = mapped_column(Date)
+    drhp_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    rhp_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    issue_open_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    issue_close_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    listing_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    price_band_low: Mapped[Decimal | None] = mapped_column(Numeric(20,4), nullable=True)
+    price_band_high: Mapped[Decimal | None] = mapped_column(Numeric(20,4), nullable=True)
+    issue_price: Mapped[Decimal | None] = mapped_column(Numeric(20,4), nullable=True)
+    lot_size: Mapped[int | None] = mapped_column(nullable=True)
+    fresh_issue_amount: Mapped[Decimal | None] = mapped_column(Numeric(24,2), nullable=True)
+    ofs_amount: Mapped[Decimal | None] = mapped_column(Numeric(24,2), nullable=True)
+    source_url: Mapped[str] = mapped_column(Text)
+    source_type: Mapped[str] = mapped_column(String(30), default="SEBI")
+    last_checked_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class IPODocument(Base):
+    __tablename__ = "ipo_documents"
+    __table_args__ = (UniqueConstraint("ipo_id", "content_hash", name="uq_ipo_document_hash"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ipo_id: Mapped[int] = mapped_column(ForeignKey("ipo_issues.id"), index=True)
+    document_type: Mapped[str] = mapped_column(String(30))
+    document_date: Mapped[date] = mapped_column(Date)
+    title: Mapped[str] = mapped_column(String(300))
+    source_url: Mapped[str] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    page_count: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class IPODocumentSection(Base):
+    __tablename__ = "ipo_document_sections"
+    __table_args__ = (UniqueConstraint("document_id", "section_index", name="uq_ipo_section"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("ipo_documents.id"), index=True)
+    section_index: Mapped[int] = mapped_column()
+    page_number: Mapped[int | None] = mapped_column(nullable=True)
+    heading: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    text: Mapped[str] = mapped_column(Text)
+
+
+class IPOAnalysis(Base):
+    __tablename__ = "ipo_analyses"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ipo_id: Mapped[int] = mapped_column(ForeignKey("ipo_issues.id"), index=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("ipo_documents.id"))
+    outcome: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default="DRAFT")
+    payload: Mapped[dict] = mapped_column(JSON)
+    provider: Mapped[str] = mapped_column(String(30))
+    model: Mapped[str] = mapped_column(String(160))
+    prompt_version: Mapped[str] = mapped_column(String(60), default="ipo-analysis-v1")
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

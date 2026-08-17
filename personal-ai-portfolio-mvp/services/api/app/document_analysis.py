@@ -89,12 +89,12 @@ def store_document(db: Session, *, instrument_id: int, document_type: str, title
     return document
 
 
-def _invoke(prompt: str) -> tuple[dict, str, str]:
+def _invoke(prompt: str, schema: type[BaseModel] = AnalysisPayload) -> tuple[dict, str, str]:
     errors = []
     if settings.disclosure_llm_provider in {"auto", "ollama"}:
         try:
             response = httpx.post(f"{settings.ollama_base_url.rstrip('/')}/api/chat", json={
-                "model": settings.ollama_model, "stream": False, "format": AnalysisPayload.model_json_schema(),
+                "model": settings.ollama_model, "stream": False, "format": schema.model_json_schema(),
                 "options": {"temperature": 0}, "messages": [{"role": "user", "content": prompt}],
             }, timeout=180)
             response.raise_for_status()
@@ -108,7 +108,7 @@ def _invoke(prompt: str) -> tuple[dict, str, str]:
                 "model": settings.openrouter_model, "temperature": 0,
                 "response_format": {"type": "json_schema", "json_schema": {
                     "name": "grounded_document_analysis", "strict": True,
-                    "schema": AnalysisPayload.model_json_schema()}},
+                    "schema": schema.model_json_schema()}},
                 "messages": [{"role": "user", "content": prompt}]}, timeout=180)
             response.raise_for_status()
             return json.loads(response.json()["choices"][0]["message"]["content"]), "OPENROUTER", settings.openrouter_model

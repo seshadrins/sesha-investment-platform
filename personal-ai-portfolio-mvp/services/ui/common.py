@@ -50,6 +50,19 @@ def api_put(path: str, json=None, timeout=120):
         return None
 
 
+def api_patch(path: str, json=None, timeout=120):
+    try:
+        response = requests.patch(f"{API}{path}", json=json, timeout=timeout)
+        if not response.ok:
+            detail = response.text
+            try: detail = response.json().get("detail", detail)
+            except ValueError: pass
+            st.error(f"Could not complete the request: {detail}"); return None
+        return response.json()
+    except requests.RequestException as exc:
+        st.error(f"The portfolio service is unavailable: {exc}"); return None
+
+
 def instrument_label(item):
     return f"{item['exchange']}:{item['symbol']} — {item['company_name']}"
 
@@ -67,6 +80,8 @@ def render_sidebar():
             "7. **Investor Styles** — NIFTY 500 screen, rules, and backtests\n"
             "8. **Followed Investors** — public-disclosure signals\n"
             "9. **Document Analysis** — cited reports and transcripts"
+            "\n10. **Notional Portfolio** — simulated trades and performance"
+            "\n11. **IPOs** — pre-IPO evidence and first-year monitoring"
         )
         st.divider()
         st.caption("Read-only decision support. No orders are placed.")
