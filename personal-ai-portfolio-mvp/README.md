@@ -23,7 +23,7 @@ A self-hosted, Windows-first portfolio ledger and decision-support application.
 
 This software is for personal research and decision support. It does not guarantee returns and does not place orders.
 
-The main dashboard is stock-centric: **Owned stocks** and **Prospective · Strong Buy** are the two
+The main dashboard is stock-centric: **Owned stocks** and **Prospective · Buy & Strong Buy** are the two
 top-level tabs. Each descriptive analysis tab contains the complete, consistently ordered stock
 list—no stock selection is required—and scrolls vertically when the list exceeds the table viewport. The
 **Portfolio & Thesis**, **Data & Freshness**, **Financial Analysis**, **Investor Style Fit**, and
@@ -160,7 +160,7 @@ The **NIFTY 500 screening** tab refreshes official NIFTY 100, NIFTY Midcap 150, 
 Smallcap 250 constituent files, preserving Large/Mid/Small labels. Screening is resumable in small
 batches because each non-owned company requires multiple Upstox Analytics fundamentals requests.
 Every result is retained in a dated audit, but only companies currently satisfying the deterministic
-`STRONG_BUY` gate enter **Prospective Stocks**. Index membership is a candidate filter, not a
+`STRONG_BUY` or `BUY` gate enter **Prospective Stocks**. Index membership is a candidate filter, not a
 recommendation, and the application never places an order.
 
 ### Followed investor signals (Phase 5)

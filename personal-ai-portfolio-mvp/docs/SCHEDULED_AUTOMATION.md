@@ -14,7 +14,7 @@ not run. The dashboard is rebuilt after the checks finish.
 | 3 | Owned/prospective financial statements | After a financial-reporting period becomes due | 10 unchecked companies |
 | 4 | NIFTY 500 evidence and screening | Once per newly due financial-reporting period | 10 non-owned companies |
 | 5 | Followed-investor disclosures | After the quarterly disclosure filing window | 10 exchange source mappings |
-| 6 | Stock workbench snapshot | After the other actions finish | All owned and Strong Buy prospective stocks |
+| 6 | Stock workbench snapshot | After the other actions finish | All owned and active prospective stocks |
 
 ### Previous-close prices
 

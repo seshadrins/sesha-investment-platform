@@ -23,7 +23,7 @@ def test_nifty500_config_has_all_cap_segments():
     universe = load_screening_universes()[0]
     assert universe["id"] == "nifty500"
     assert {source["cap_segment"] for source in universe["sources"]} == {"LARGE", "MID", "SMALL"}
-    assert universe["shortlist_recommendation"] == "STRONG_BUY"
+    assert universe["shortlist_recommendations"] == ["STRONG_BUY", "BUY"]
 
 
 def test_constituent_parser_preserves_cap_segment():

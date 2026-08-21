@@ -25,7 +25,7 @@ def load_screening_universes() -> list[dict[str, Any]]:
     universes = []
     for path in sorted(UNIVERSE_DIR.glob("*.yaml")):
         config = yaml.safe_load(path.read_text(encoding="utf-8"))
-        required = {"id", "name", "description", "shortlist_recommendation", "sources"}
+        required = {"id", "name", "description", "shortlist_recommendations", "sources"}
         missing = required - set(config or {})
         if missing:
             raise ValueError(f"{path.name} is missing: {', '.join(sorted(missing))}")

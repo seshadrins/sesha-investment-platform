@@ -83,7 +83,7 @@ selected_account = account_filter_col.selectbox(
 sync_prices_col.markdown("<div style='height:1.85rem'></div>", unsafe_allow_html=True)
 if sync_prices_col.button(
     "Sync prices only", width="stretch",
-    help="Refresh stored closing prices for owned and Strong Buy prospective stocks "
+    help="Refresh stored closing prices for owned and Buy/Strong Buy prospective stocks "
          "without running the rest of the morning automation.",
 ):
     with st.spinner("Syncing prices…"):
@@ -189,7 +189,7 @@ with st.expander("📈 Performance history & diversification"):
 
 owned_tab, prospective_tab = st.tabs([
     f"Owned stocks ({len(owned_rows)})",
-    f"Prospective · Strong Buy ({len(workbench['prospective'])})",
+    f"Prospective · Buy & Strong Buy ({len(workbench['prospective'])})",
 ])
 with owned_tab:
     render_scope(workbench, owned_rows, "OWNED", account_positions)

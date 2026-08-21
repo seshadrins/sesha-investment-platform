@@ -6,8 +6,9 @@ from common import api_get, api_post, instrument_label, render_sidebar
 render_sidebar()
 st.title("Watchlist & Strategy")
 st.caption(
-    "A mid-funnel watchlist for stocks you're tracking that don't (yet) pass the Strong Buy "
-    "gate, and a single view of where new capital should go once you have some to deploy."
+    "A mid-funnel watchlist for stocks you're tracking that don't (yet) pass the Buy or "
+    "Strong Buy gate, and a single view of where new capital should go once you have some "
+    "to deploy."
 )
 
 watch_tab, deploy_tab = st.tabs(["Watching", "Deploy new capital"])
@@ -52,8 +53,8 @@ with watch_tab:
             if api_post(f"/watchlist/{remove_options[remove_label]}/archive"):
                 st.success("Removed."); st.rerun()
         st.caption(
-            "A stock that later passes the Strong Buy gate is shown here until it's promoted "
-            "to Prospective on the main dashboard, or removed here."
+            "A stock that later passes the Buy or Strong Buy gate is shown here until it's "
+            "promoted to Prospective on the main dashboard, or removed here."
         )
 
 with deploy_tab:

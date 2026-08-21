@@ -7,7 +7,7 @@ from common import api_get, api_post, instrument_label, render_sidebar
 
 render_sidebar()
 st.title("Investor Styles, Shortlist & Backtests")
-st.caption("Version-controlled rules, a Strong Buy-only prospective shortlist, and point-in-time backtests.")
+st.caption("Version-controlled rules, a Buy/Strong Buy-only prospective shortlist, and point-in-time backtests.")
 
 instruments = api_get("/instruments?include_candidates=true")
 styles = api_get("/investor-styles")
@@ -117,7 +117,7 @@ with screening_tab:
 
         results = api_get("/screening-universes/nifty500/results")
         st.subheader("Latest screening audit")
-        st.caption("Every evaluated candidate is retained here; only Strong Buy results enter Prospective Stocks.")
+        st.caption("Every evaluated candidate is retained here; only Buy and Strong Buy results enter Prospective Stocks.")
         if not results:
             st.info("Refresh constituents, then screen a batch to create the first audit results.")
         else:
@@ -229,7 +229,7 @@ with matrix_tab:
     owned_rows = [row for row in matrix["rows"] if row["universe"] == "OWNED"]
     prospective_rows = [row for row in matrix["rows"] if row["universe"] == "PROSPECTIVE"]
     owned_view, prospective_view = st.tabs([
-        f"Owned stocks ({len(owned_rows)})", f"Prospective · Strong Buy ({len(prospective_rows)})"
+        f"Owned stocks ({len(owned_rows)})", f"Prospective · Buy & Strong Buy ({len(prospective_rows)})"
     ])
     with owned_view:
         st.caption("Portfolio recommendations include Buy More, Hold, Review, Trim, Sell, or Strong Sell based on portfolio and thesis rules.")
@@ -241,9 +241,9 @@ with matrix_tab:
             st.download_button("Download owned matrix", owned_df.to_csv(index=False).encode("utf-8"),
                                file_name="owned_stock_style_matrix.csv", mime="text/csv")
     with prospective_view:
-        st.caption("Only non-owned companies that currently satisfy the Strong Buy gate appear here.")
+        st.caption("Only non-owned companies that currently satisfy the Buy or Strong Buy gate appear here.")
         if not prospectives:
-            st.info("No Strong Buy candidate has passed the NIFTY 500 screen yet.")
+            st.info("No Buy or Strong Buy candidate has passed the NIFTY 500 screen yet.")
         else:
             recommendation_df = pd.DataFrame([{
                 "Stock": f"{item['exchange']}:{item['symbol']}",

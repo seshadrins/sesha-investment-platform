@@ -72,7 +72,7 @@ def render_scope(workbench, rows, scope, account_positions=None):
             st.info("No owned stocks were found. Use Portfolio Setup to add opening holdings.")
         else:
             st.info(
-                "No prospective stock currently passes the Strong Buy gate. "
+                "No prospective stock currently passes the Buy or Strong Buy gate. "
                 "Continue the NIFTY 500 screen in Styles & Screening."
             )
             st.page_link("pages/5_Investor_Styles.py", label="Open NIFTY 500 screening")
@@ -81,72 +81,65 @@ def render_scope(workbench, rows, scope, account_positions=None):
     st.caption(
         "The same stock rows appear in every tab (Owned is ordered by recommendation "
         "urgency — STRONG_SELL first; Prospective is alphabetical since every row there "
-        "is already Strong Buy); no stock selection is required."
+        "is already Buy or Strong Buy); no stock selection is required."
     )
-    portfolio_tab, data_tab, financial_tab, style_tab, investor_tab, summary_tab = st.tabs([
-        "Portfolio & Thesis", "Data & Freshness", "Financial Analysis",
-        "Investor Style Fit", "Followed Investors", "Summary & Recommendation",
+    portfolio_tab, financial_tab, style_tab, investor_tab, summary_tab, data_tab = st.tabs([
+        "Portfolio & Thesis", "Financial Analysis", "Investor Style Fit",
+        "Followed Investors", "Summary & Recommendation", "Data & Freshness",
     ])
 
     with portfolio_tab:
-        if scope == "OWNED":
-            def portfolio_field(row, field):
-                if account_positions is not None:
-                    return account_positions.get(row["instrument_id"], {}).get(field)
-                return row["portfolio"][field]
+        def portfolio_field(row, field):
+            if account_positions is not None:
+                return account_positions.get(row["instrument_id"], {}).get(field)
+            return row["portfolio"][field]
 
-            frame = pd.DataFrame([{
-                "Stock": stock_name(row),
-                "Company": row["company_name"],
-                "Accounts": ", ".join(row["portfolio"]["accounts"])
-                            if account_positions is None
-                            else account_positions.get(row["instrument_id"], {}).get("account_name", ""),
-                "Quantity": portfolio_field(row, "quantity"),
-                "Average cost": portfolio_field(row, "average_cost"),
-                "Value at cost": portfolio_field(row, "remaining_cost"),
-                "Current price": portfolio_field(row, "current_price"),
-                "Chg": _price_move_marker(
-                    portfolio_field(row, "current_price"), portfolio_field(row, "previous_close")
-                ),
-                "Market value": portfolio_field(row, "market_value"),
-                "Unrealised P&L": portfolio_field(row, "unrealised_profit"),
-                "Return": (portfolio_field(row, "return_pct") or 0) * 100
-                          if portfolio_field(row, "return_pct") is not None else None,
-                "Weight": (portfolio_field(row, "weight") or 0) * 100
-                          if portfolio_field(row, "weight") is not None else None,
-            } for row in rows])
-            column_config = {
-                "Quantity": st.column_config.NumberColumn(format="%.4f"),
-                "Average cost": st.column_config.NumberColumn(format="₹%.2f"),
-                "Value at cost": st.column_config.NumberColumn(format="₹%.2f"),
-                "Current price": st.column_config.NumberColumn(format="₹%.2f"),
-                "Chg": st.column_config.TextColumn(
-                    width="small",
-                    help="▲ price rose versus the previous stored close · ▼ price fell · "
-                         "blank when no prior close is stored yet",
-                ),
-                "Market value": st.column_config.NumberColumn(format="₹%.2f"),
-                "Unrealised P&L": st.column_config.NumberColumn(format="₹%.2f"),
-                "Return": st.column_config.NumberColumn(format="%.2f%%"),
-                "Weight": st.column_config.NumberColumn(format="%.2f%%"),
-            }
-        else:
-            frame = pd.DataFrame([{
-                "Stock": stock_name(row),
-                "Company": row["company_name"],
-                "Sector": row["sector"] or "Not classified",
-                "Shortlisted on": row["portfolio"]["shortlisted_on"],
-                "Latest price": row["portfolio"]["current_price"],
-                "Price date": row["portfolio"]["price_date"],
-            } for row in rows])
-            column_config = {"Latest price": st.column_config.NumberColumn(format="₹%.2f")}
+        # One shared column set for Owned, Prospective, and Notional: position fields
+        # (Accounts through Weight) read as blank for a row with no holding — build_row()
+        # already leaves them None rather than omitting the keys — and Sector/Shortlisted on
+        # trail as the two columns Owned rows have no equivalent for.
+        frame = pd.DataFrame([{
+            "Stock": stock_name(row),
+            "Company": row["company_name"],
+            "Accounts": ", ".join(row["portfolio"]["accounts"])
+                        if account_positions is None
+                        else account_positions.get(row["instrument_id"], {}).get("account_name", ""),
+            "Quantity": portfolio_field(row, "quantity"),
+            "Average cost": portfolio_field(row, "average_cost"),
+            "Value at cost": portfolio_field(row, "remaining_cost"),
+            "Current price": portfolio_field(row, "current_price"),
+            "Chg": _price_move_marker(
+                portfolio_field(row, "current_price"), portfolio_field(row, "previous_close")
+            ),
+            "Market value": portfolio_field(row, "market_value"),
+            "Unrealised P&L": portfolio_field(row, "unrealised_profit"),
+            "Return": (portfolio_field(row, "return_pct") or 0) * 100
+                      if portfolio_field(row, "return_pct") is not None else None,
+            "Weight": (portfolio_field(row, "weight") or 0) * 100
+                      if portfolio_field(row, "weight") is not None else None,
+            "Sector": row["sector"] or "Not classified",
+            "Shortlisted on": row["portfolio"]["shortlisted_on"],
+        } for row in rows])
+        column_config = {
+            "Quantity": st.column_config.NumberColumn(format="%.4f"),
+            "Average cost": st.column_config.NumberColumn(format="₹%.2f"),
+            "Value at cost": st.column_config.NumberColumn(format="₹%.2f"),
+            "Current price": st.column_config.NumberColumn(format="₹%.2f"),
+            "Chg": st.column_config.TextColumn(
+                width="small",
+                help="▲ price rose versus the previous stored close · ▼ price fell · "
+                     "blank when no prior close is stored yet",
+            ),
+            "Market value": st.column_config.NumberColumn(format="₹%.2f"),
+            "Unrealised P&L": st.column_config.NumberColumn(format="₹%.2f"),
+            "Return": st.column_config.NumberColumn(format="%.2f%%"),
+            "Weight": st.column_config.NumberColumn(format="%.2f%%"),
+        }
 
         if frame.empty:
             st.info("No rows are available for this view.")
         else:
-            display_frame = (
-                frame.style.apply(_highlight_price_move, axis=1) if scope == "OWNED" else frame
-            )
+            display_frame = frame.style.apply(_highlight_price_move, axis=1)
             event = st.dataframe(
                 display_frame, width="stretch", height=TABLE_HEIGHT, hide_index=True,
                 column_config=column_config, on_select="rerun",

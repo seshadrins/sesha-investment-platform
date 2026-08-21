@@ -67,7 +67,7 @@ with st.expander("Research an individual stock"):
                 "symbol": selected_result["symbol"], "company_name": selected_result["company_name"],
                 "isin": selected_result["isin"], "sector": None, "industry": None})
             if saved:
-                st.success("Company added to the research pool. It must pass the Strong Buy gate before appearing as prospective.")
+                st.success("Company added to the research pool. It must pass the Buy or Strong Buy gate before appearing as prospective.")
                 st.rerun()
     elif "stock_search_results" in st.session_state:
         st.info("No NSE/BSE equity instruments matched that search.")
@@ -83,7 +83,7 @@ deep_link_instrument = next(
     (item for item in instruments if instrument_label(item).startswith(deep_link_symbol)), None
 ) if deep_link_symbol else None
 
-scope_options = ["Owned stocks", "Prospective · Strong Buy", "Other research and candidates"]
+scope_options = ["Owned stocks", "Prospective · Buy & Strong Buy", "Other research and candidates"]
 default_scope_index = 0
 if deep_link_instrument:
     if deep_link_instrument["id"] in owned_ids:
@@ -95,11 +95,11 @@ if deep_link_instrument:
 
 scope = st.radio(
     "Analysis view", scope_options, index=default_scope_index, horizontal=True,
-    help="NIFTY 500 candidates remain in the research pool unless they pass the Strong Buy screen.",
+    help="NIFTY 500 candidates remain in the research pool unless they pass the Buy or Strong Buy screen.",
 )
 if scope == "Owned stocks":
     visible_instruments = [item for item in instruments if item["id"] in owned_ids]
-elif scope == "Prospective · Strong Buy":
+elif scope == "Prospective · Buy & Strong Buy":
     visible_instruments = [item for item in instruments if item["id"] in prospective_ids]
 else:
     visible_instruments = [item for item in instruments
@@ -108,14 +108,14 @@ else:
 if not visible_instruments:
     messages = {
         "Owned stocks": "No currently owned stocks were found.",
-        "Prospective · Strong Buy": "No NIFTY 500 candidate currently passes the Strong Buy gate.",
+        "Prospective · Buy & Strong Buy": "No NIFTY 500 candidate currently passes the Buy or Strong Buy gate.",
         "Other research and candidates": "No additional research candidates were found.",
     }
     st.info(messages[scope])
     st.stop()
 
-if scope == "Prospective · Strong Buy":
-    st.success("Every company in this view is non-owned and currently satisfies the Strong Buy gate.")
+if scope == "Prospective · Buy & Strong Buy":
+    st.success("Every company in this view is non-owned and currently satisfies the Buy or Strong Buy gate.")
     with st.expander("Why these stocks qualified"):
         for item in prospectives:
             st.markdown(f"**{item['symbol']} · score {item['financial_score']}/100 · "

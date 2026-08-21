@@ -129,7 +129,7 @@ def render_sidebar():
             "1. **Portfolio Setup** — accounts and opening data\n"
             "2. **Transactions** — buys, sells and income\n"
             "3. **Thesis & Review** — research decisions\n"
-            "4. **Financial Analysis** — owned and Strong Buy prospects\n"
+            "4. **Financial Analysis** — owned and Buy/Strong Buy prospects\n"
             "5. **Investor Styles** — NIFTY 500 screen, rules, and backtests\n"
             "6. **Followed Investors** — public-disclosure signals\n"
             "7. **Document Analysis** — cited reports and transcripts\n"

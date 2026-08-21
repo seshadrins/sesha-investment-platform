@@ -301,20 +301,21 @@ def add_to_watchlist(payload: WatchlistCreate, db: Session = Depends(get_db)):
     analysis = build_financial_analysis(db, instrument)
     styles = evaluate_current_styles(db, instrument)
     action, reasons = recommend_prospective(analysis, styles)
-    if action != "STRONG_BUY":
+    if action not in {"STRONG_BUY", "BUY"}:
         raise HTTPException(409, {
-            "message": "Only stocks currently rated Strong Buy can enter Prospective Stocks.",
+            "message": "Only stocks currently rated Buy or Strong Buy can enter Prospective Stocks.",
             "current_recommendation": action,
             "reasons": reasons,
         })
+    manual_source = f"MANUAL_{action}"
     item = db.scalar(select(WatchlistItem).where(WatchlistItem.instrument_id == instrument.id))
     if item:
         item.status = "ACTIVE"
-        item.source = "MANUAL_STRONG_BUY"
+        item.source = manual_source
         item.notes = payload.notes if payload.notes is not None else item.notes
     else:
         item = WatchlistItem(instrument_id=instrument.id, status="ACTIVE",
-                             source="MANUAL_STRONG_BUY", notes=payload.notes)
+                             source=manual_source, notes=payload.notes)
         db.add(item)
     db.commit()
     db.refresh(item)
@@ -379,10 +380,13 @@ def list_screening_universe_status(db: Session = Depends(get_db)):
             ScreeningResult.criteria_version.contains(cycle_marker),
             ScreeningResult.instrument_id.in_(candidate_ids),
         )).all()) if candidate_ids else set()
+        # Deliberately hardcoded rather than config["shortlist_recommendations"] (which now
+        # also includes BUY, Changes-SetB Phase 6): this progress counter has always meant
+        # "how many Strong Buys today," a narrower metric than "how many entered Prospective."
         strong_buys = db.scalar(select(func.count()).select_from(ScreeningResult).where(
             ScreeningResult.universe_id == config["id"],
             ScreeningResult.criteria_version.contains(cycle_marker),
-            ScreeningResult.recommendation == config["shortlist_recommendation"],
+            ScreeningResult.recommendation == "STRONG_BUY",
             ScreeningResult.instrument_id.in_(candidate_ids),
         )) if candidate_ids else 0
         segment_counts = {segment: sum(item.cap_segment == segment for item in memberships)

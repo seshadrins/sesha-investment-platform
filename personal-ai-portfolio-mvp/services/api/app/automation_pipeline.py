@@ -94,7 +94,7 @@ def list_prospective_stocks_data(db: Session) -> list[dict]:
         analysis = build_financial_analysis(db, instrument)
         styles = evaluate_current_styles(db, instrument)
         action, reasons = recommend_prospective(analysis, styles)
-        if action != "STRONG_BUY":
+        if action not in {"STRONG_BUY", "BUY"}:
             continue
         output.append({"watchlist_id": item.id, "instrument_id": instrument.id,
             "exchange": instrument.exchange, "symbol": instrument.symbol,
@@ -242,7 +242,7 @@ def _screen_universe_batch(db: Session, universe_id: str, batch_size: int) -> di
                 WatchlistItem.instrument_id == instrument.id
             ))
             screening_source = f"SCREEN:{universe_id}"
-            if recommendation == config["shortlist_recommendation"]:
+            if recommendation in config["shortlist_recommendations"]:
                 if watchlist:
                     watchlist.status = "ACTIVE"
                     watchlist.source = screening_source
