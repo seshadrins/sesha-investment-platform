@@ -5,7 +5,7 @@ import io
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
@@ -967,6 +967,19 @@ def investor_alias_reviews(
         query = query.where(InvestorAliasReview.status == status.upper())
     reviews = db.scalars(query.order_by(InvestorAliasReview.created_at.desc())).all()
     return [review_out(db, item) for item in reviews]
+
+
+@app.get("/investor-disclosures/documents/{document_id}/content")
+def get_disclosure_document_content(document_id: int, db: Session = Depends(get_db)):
+    document = db.get(DisclosureDocument, document_id)
+    if not document or not document.content:
+        raise HTTPException(404, "No stored content for this disclosure document.")
+    filename = f"disclosure-{document_id}.{'xml' if 'xml' in (document.content_type or '') else 'html'}"
+    return Response(
+        content=document.content,
+        media_type=document.content_type or "application/octet-stream",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 
 
 @app.post("/investor-disclosures/reviews/{review_id}/decision")

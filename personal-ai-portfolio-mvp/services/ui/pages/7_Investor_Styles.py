@@ -157,7 +157,17 @@ with evidence_tab:
         st.info("Add a holding or run the screener before inspecting rule evidence.")
     else:
         instrument_map = {instrument_label(item): item for item in analysis_instruments}
-        selected = instrument_map[st.selectbox("Company", instrument_map, key="evidence_company")]
+        labels = list(instrument_map)
+        # Consumed once: a deep link from the dashboard's Summary & Recommendation tab
+        # pre-selects this stock (open this tab to see it applied).
+        deep_link_symbol = st.session_state.pop("deep_link_symbol", None)
+        default_index = next(
+            (index for index, label in enumerate(labels) if deep_link_symbol and label.startswith(deep_link_symbol)),
+            0,
+        )
+        selected = instrument_map[st.selectbox(
+            "Company", labels, index=default_index, key="evidence_company"
+        )]
         st.subheader(f"Rule evidence for {selected['symbol']}")
         evaluations = api_get(f"/investor-styles/evaluate/{selected['id']}")
         if not evaluations:
@@ -237,7 +247,13 @@ with backtest_tab:
                          column_config={"forward_return_pct": st.column_config.NumberColumn(
                              "Forward return", format="%.2f%%")})
             with st.expander("Methodology and limitations", expanded=True):
-                st.json(result["methodology"])
+                methodology = result["methodology"]
+                st.write(
+                    f"Reporting lag: {methodology['reporting_lag_days']} days · "
+                    f"Horizon: {methodology['horizon_days']} days · "
+                    f"Price tolerance: {methodology['price_tolerance_days']} days · "
+                    f"Point-in-time: {'Yes' if methodology['point_in_time'] else 'No'}"
+                )
                 for limitation in result["limitations"]:
                     st.write(f"• {limitation}")
 

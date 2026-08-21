@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, Instrument, Transaction, TransactionType
+from app.models import Account, DisclosureDocument, Instrument, Transaction, TransactionType
 
 
 @pytest.fixture
@@ -203,3 +203,42 @@ def test_same_day_sell_before_buy_is_rejected_by_the_oversell_guard(client, sess
     db = session_factory()
     assert db.query(Transaction).count() == 1
     db.close()
+
+
+def test_disclosure_document_content_endpoint_returns_stored_bytes(client, session_factory):
+    db = session_factory()
+    instrument = Instrument(exchange="NSE", symbol="DOCTEST", company_name="Doc Test Ltd")
+    db.add(instrument)
+    db.flush()
+    document = DisclosureDocument(
+        instrument_id=instrument.id, exchange="NSE", report_date=date(2026, 3, 31),
+        source_url="https://www.nseindia.com/doc-test.xml", content_type="application/xml",
+        content=b"<xbrl>raw filing bytes</xbrl>",
+    )
+    db.add(document)
+    db.commit()
+    document_id = document.id
+    db.close()
+
+    response = client.get(f"/investor-disclosures/documents/{document_id}/content")
+    assert response.status_code == 200
+    assert response.content == b"<xbrl>raw filing bytes</xbrl>"
+    assert response.headers["content-type"].startswith("application/xml")
+
+
+def test_disclosure_document_content_endpoint_404_when_no_content_stored(client, session_factory):
+    db = session_factory()
+    instrument = Instrument(exchange="NSE", symbol="NODOC", company_name="No Doc Ltd")
+    db.add(instrument)
+    db.flush()
+    document = DisclosureDocument(
+        instrument_id=instrument.id, exchange="NSE", report_date=date(2026, 3, 31),
+        source_url="https://www.nseindia.com/no-content.xml",
+    )
+    db.add(document)
+    db.commit()
+    document_id = document.id
+    db.close()
+
+    response = client.get(f"/investor-disclosures/documents/{document_id}/content")
+    assert response.status_code == 404

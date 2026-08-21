@@ -9,16 +9,17 @@ st.set_page_config(
     layout="wide",
 )
 
-from common import api_get, api_post, api_put, render_sidebar
+from common import api_get, api_post, render_sidebar
 
 render_sidebar()
 st.title("Personal AI Portfolio Manager")
 st.caption("Review every stock across portfolio, data, financial, style, and followed-investor evidence.")
 
 workbench = api_get("/stock-workbench")
-automation = api_get("/analysis-schedule")
-run_history = api_get("/analysis-schedule/runs?limit=20")
-automation_alerts = api_get("/notifications?category=AUTOMATION&limit=20")
+# Non-critical: the automation health/schedule summary is secondary to the workbench data
+# itself, so a failure here shows a warning and falls back gracefully instead of blanking
+# the whole dashboard the workbench data already loaded fine for.
+automation = api_get("/analysis-schedule", critical=False) or {}
 TABLE_HEIGHT = 650
 
 snapshot = workbench["snapshot"]
@@ -28,20 +29,6 @@ schedule_info.caption(
     f"Cached analysis generated {snapshot['generated_at']} · scheduled {schedule['days']} at "
     f"{schedule['hour']:02d}:{schedule['minute']:02d} {schedule['timezone']}"
 )
-health = automation["health"]
-if health["status"] in {"OVERDUE", "MISSED", "FAILED", "STALLED", "HEARTBEAT_STALE"}:
-    latest_error = (health.get("latest_run") or {}).get("error")
-    st.error(
-        f"Scheduled analysis health: {health['status']}. Expected run: "
-        f"{health['expected_scheduled_for']}. "
-        + (f"Last error: {latest_error}. " if latest_error else "")
-        + "The scheduler will attempt bounded recovery; use ‘All due morning activities’ "
-          "and Run now if manual recovery is required."
-    )
-elif health["status"] == "DEGRADED":
-    st.warning("The morning run completed partially. Failed activities are queued for bounded retry.")
-elif health["status"] == "RUNNING":
-    st.info("The scheduled morning analysis is currently running. The last snapshot remains available.")
 force_options = {
     "All due morning activities": "morning",
     "Prices only": "prices",
@@ -66,66 +53,25 @@ if force_action.button("Run now", type="secondary", width="stretch"):
         )
         st.rerun()
 
-with st.expander("Automation schedule and latest status"):
-    schedule_rows = [{
-        "Activity": item["name"],
-        "Frequency": item["frequency"],
-        "Policy": item["policy"],
-        "Last attempted": item["last_attempted_at"],
-        "Status": item["last_status"],
-        "Last error": item["last_error"],
-    } for item in automation["jobs"]]
-    st.dataframe(pd.DataFrame(schedule_rows), width="stretch", hide_index=True)
-    st.caption(
-        f"Health: {health['status']} · heartbeat {health['heartbeat_at'] or 'not received'} · "
-        f"start grace {health['start_grace_minutes']} min · stall limit {health['stall_minutes']} min"
+# Compact health banner: only rendered when something's actually wrong. Full schedule,
+# metrics, and run history live on the System Status page so they don't push the stock
+# tables below the fold.
+health = automation.get("health")
+if health and health["status"] in {"OVERDUE", "MISSED", "FAILED", "STALLED", "HEARTBEAT_STALE"}:
+    latest_error = (health.get("latest_run") or {}).get("error")
+    st.error(
+        f"Scheduled analysis health: {health['status']}. Expected run: "
+        f"{health['expected_scheduled_for']}. "
+        + (f"Last error: {latest_error}. " if latest_error else "")
+        + "The scheduler will attempt bounded recovery; use ‘All due morning activities’ "
+          "and Run now if manual recovery is required. Full history: System Status page."
     )
-    config = automation["schedule"]
-    with st.form("edit_automation_schedule"):
-        enabled = st.checkbox("Scheduled runs enabled", value=config["enabled"])
-        edit_cols = st.columns(4)
-        days = edit_cols[0].text_input("Days", value=config["days"], help="APScheduler syntax, e.g. tue-sat")
-        hour = edit_cols[1].number_input("Hour", 0, 23, int(config["hour"]))
-        minute = edit_cols[2].number_input("Minute", 0, 59, int(config["minute"]))
-        timezone = edit_cols[3].text_input("Time zone", value=config["timezone"])
-        save_schedule = st.form_submit_button("Save schedule")
-    if save_schedule and api_put("/analysis-schedule", json={"enabled": enabled, "days": days,
-            "hour": hour, "minute": minute, "timezone": timezone}):
-        st.success("Schedule saved. The worker will apply it within 30 seconds."); st.rerun()
+elif health and health["status"] == "DEGRADED":
+    st.warning("The morning run completed partially. Failed activities are queued for bounded retry. "
+               "Full history: System Status page.")
+elif health and health["status"] == "RUNNING":
+    st.info("The scheduled morning analysis is currently running. The last snapshot remains available.")
 
-with st.expander("Automation metrics and alerts"):
-    metrics = automation["metrics"]
-    metric_cols = st.columns(5)
-    metric_cols[0].metric("Runs (30d)", metrics["runs"])
-    metric_cols[1].metric("Success rate", f"{metrics['success_rate_pct']:.1f}%" if metrics["success_rate_pct"] is not None else "—")
-    metric_cols[2].metric("Recovery runs", metrics["recovery_runs"])
-    metric_cols[3].metric("Median duration", f"{metrics['duration_seconds']['p50']:.1f}s" if metrics["duration_seconds"]["p50"] is not None else "—")
-    metric_cols[4].metric("95th percentile", f"{metrics['duration_seconds']['p95']:.1f}s" if metrics["duration_seconds"]["p95"] is not None else "—")
-    if metrics["activities"]:
-        st.dataframe(pd.DataFrame([{"Activity": name, **values} for name, values in metrics["activities"].items()]), width="stretch", hide_index=True)
-    if not automation_alerts:
-        st.info("No automation alerts have been recorded.")
-    for alert in automation_alerts:
-        st.markdown(f"**{alert['title']}** — {alert['message']}")
-        st.caption(f"{alert['created_at']} · {alert['severity']} · external delivery {alert['delivery_status']}")
-
-with st.expander("Automation run history"):
-    history_rows = [{
-        "Scheduled for": item["scheduled_for"],
-        "Trigger": item["trigger"].replace("_", " ").title(),
-        "Attempt": item["attempt"],
-        "Status": item["status"],
-        "Started": item["started_at"],
-        "Completed": item["completed_at"],
-        "Actions": ", ".join(
-            f"{name}: {status}" for name, status in item["action_status"].items()
-        ),
-        "Error": item["error"],
-    } for item in run_history]
-    if history_rows:
-        st.dataframe(pd.DataFrame(history_rows), width="stretch", hide_index=True)
-    else:
-        st.info("No tracked scheduled or forced runs have been recorded yet.")
 if snapshot["mode"] == "COLD_START":
     st.info("The scheduler had not produced its first snapshot, so an initial snapshot was generated once.")
 if snapshot["last_status"] == "FAILED":
@@ -133,35 +79,37 @@ if snapshot["last_status"] == "FAILED":
         "The last scheduled refresh failed; the dashboard is showing the previous successful snapshot. "
         f"Error: {snapshot['last_error']}"
     )
-market_refresh = workbench.get("data_refresh", {}).get("market_prices")
-if market_refresh:
-    st.caption(
-        f"Market refresh: {market_refresh['status']} · target {market_refresh.get('target_date')} · "
-        f"{market_refresh.get('prices_imported', 0)} prices stored"
-    )
-    market_errors = market_refresh.get("errors") or (
-        [market_refresh["error"]] if market_refresh.get("error") else []
-    )
-    if market_errors:
-        with st.expander(f"Market refresh messages ({len(market_errors)})"):
+
+data_refresh = workbench.get("data_refresh", {})
+if data_refresh:
+    with st.expander("Today's data refresh details"):
+        market_refresh = data_refresh.get("market_prices")
+        if market_refresh:
+            st.caption(
+                f"Market refresh: {market_refresh['status']} · target {market_refresh.get('target_date')} · "
+                f"{market_refresh.get('prices_imported', 0)} prices stored"
+            )
+            market_errors = market_refresh.get("errors") or (
+                [market_refresh["error"]] if market_refresh.get("error") else []
+            )
             for error in market_errors:
                 st.write(f"• {error}")
-
-for key, label in (
-    ("financial_statements", "Financial statements"),
-    ("nifty500_screening", "NIFTY 500 screening"),
-    ("nifty500_constituents", "NIFTY 500 constituents"),
-    ("investor_disclosures", "Investor disclosures"),
-):
-    result = workbench.get("data_refresh", {}).get(key)
-    if result:
-        detail = result.get("processed", result.get("constituents", ""))
-        suffix = f" · {detail} processed" if detail != "" else ""
-        if key == "investor_disclosures" and result.get("coverage_status"):
-            progress = result.get("coverage_progress", {})
-            suffix += (f" · coverage {result['coverage_status']} · "
-                       f"{progress.get('checked_mappings', 0)}/{progress.get('active_mappings', 0)} mappings")
-        st.caption(f"{label}: {result.get('status', 'UNKNOWN')}{suffix}")
+        for key, label in (
+            ("financial_statements", "Financial statements"),
+            ("nifty500_screening", "NIFTY 500 screening"),
+            ("nifty500_constituents", "NIFTY 500 constituents"),
+            ("investor_disclosures", "Investor disclosures"),
+        ):
+            result = data_refresh.get(key)
+            if result:
+                detail = result.get("processed", result.get("constituents", ""))
+                suffix = f" · {detail} processed" if detail != "" else ""
+                if key == "investor_disclosures" and result.get("coverage_status"):
+                    progress = result.get("coverage_progress", {})
+                    suffix += (f" · coverage {result['coverage_status']} · "
+                               f"{progress.get('checked_mappings', 0)}/{progress.get('active_mappings', 0)} mappings")
+                st.caption(f"{label}: {result.get('status', 'UNKNOWN')}{suffix}")
+        st.page_link("pages/12_System_Status.py", label="Full automation schedule, metrics, and run history")
 
 
 def stock_name(row):
@@ -232,6 +180,11 @@ def render_scope(rows, scope, account_positions=None):
                 "Unrealised P&L": st.column_config.NumberColumn(format="₹%.2f"),
                 "Return": st.column_config.NumberColumn(format="%.2f%%"),
                 "Weight": st.column_config.NumberColumn(format="%.2f%%"),
+                # Explicit widths for the free-text columns so the grid produces real
+                # horizontal scroll instead of silently shrinking every column to fit —
+                # without these, "Thesis summary" was pushed off-screen with no scrollbar.
+                "Thesis": st.column_config.TextColumn(width="small"),
+                "Thesis summary": st.column_config.TextColumn(width="large"),
             })
         else:
             frame = pd.DataFrame([{
@@ -246,6 +199,8 @@ def render_scope(rows, scope, account_positions=None):
             } for row in rows])
             render_table(frame, {
                 "Latest price": st.column_config.NumberColumn(format="₹%.2f"),
+                "Thesis": st.column_config.TextColumn(width="small"),
+                "Thesis summary": st.column_config.TextColumn(width="large"),
             })
 
     with data_tab:
@@ -338,7 +293,27 @@ def render_scope(rows, scope, account_positions=None):
             "Financial evidence": row["financials"]["as_of"],
             "Price date": row["portfolio"]["price_date"],
         } for row in rows])
-        render_table(frame)
+        if frame.empty:
+            st.info("No rows are available for this view.")
+        else:
+            event = st.dataframe(
+                frame, width="stretch", height=TABLE_HEIGHT, hide_index=True,
+                on_select="rerun", selection_mode="single-row", key=f"summary_select_{scope}",
+            )
+            st.caption(
+                f"Showing {len(frame)} stocks. Select a row, then jump to its Governance "
+                "flags or Style Fit detail with that stock already selected."
+            )
+            selected_indices = event.selection.rows if event and event.selection else []
+            if selected_indices:
+                selected_row = rows[selected_indices[0]]
+                jump_cols = st.columns([1, 1, 4])
+                if jump_cols[0].button("Open Financial Analysis", key=f"jump_financial_{scope}"):
+                    st.session_state["deep_link_symbol"] = stock_name(selected_row)
+                    st.switch_page("pages/6_Financial_Analysis.py")
+                if jump_cols[1].button("Open Investor Style Fit", key=f"jump_styles_{scope}"):
+                    st.session_state["deep_link_symbol"] = stock_name(selected_row)
+                    st.switch_page("pages/7_Investor_Styles.py")
         st.download_button(
             f"Download {scope.lower()} summary",
             frame.to_csv(index=False).encode("utf-8"),
@@ -412,9 +387,10 @@ with prospective_tab:
     render_scope(workbench["prospective"], "PROSPECTIVE")
 
 with st.expander("Manage data and workflows"):
-    links = st.columns(5)
+    links = st.columns(6)
     links[0].page_link("pages/1_Portfolio_Setup.py", label="Portfolio Setup")
     links[1].page_link("pages/3_Prices.py", label="Data Sources & Sync")
     links[2].page_link("pages/6_Financial_Analysis.py", label="Financial Analysis")
     links[3].page_link("pages/7_Investor_Styles.py", label="Styles & Screening")
     links[4].page_link("pages/8_Followed_Investors.py", label="Followed Investors")
+    links[5].page_link("pages/12_System_Status.py", label="System Status")

@@ -3,7 +3,7 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from common import api_get, api_post, instrument_label, render_sidebar
+from common import api_get, api_post, disclosure_document_url, instrument_label, render_sidebar
 
 
 def latest_due_quarter() -> date:
@@ -113,6 +113,8 @@ with tabs[1]:
             "Signal": item["signal"].replace("_", " "),
             "Ownership": item["ownership_pct"], "Change": item["change_percentage_points"],
             "Stale": item["stale"], "Source": item["source_url"],
+            "Stored copy": disclosure_document_url(item["document_id"])
+                           if item.get("document_id") else None,
         } for item in activity])
         visible = activity_df[activity_df["Signal"].isin(selected_signals)]
         st.dataframe(visible, width="stretch", hide_index=True, column_config={
@@ -121,6 +123,7 @@ with tabs[1]:
                 "Change (percentage points)", format="%+.2f"
             ),
             "Source": st.column_config.LinkColumn("Source filing", display_text="Open"),
+            "Stored copy": st.column_config.LinkColumn("Stored copy", display_text="View"),
         })
 
 with tabs[2]:
@@ -153,7 +156,16 @@ with tabs[2]:
                 st.warning("The batch completed with some source failures.")
             else:
                 st.success("The disclosure batch completed.")
-            st.json(result)
+            result_cols = st.columns(5)
+            result_cols[0].metric("Checked", result.get("checked", 0))
+            result_cols[1].metric("Discovered", result.get("discovered", 0))
+            result_cols[2].metric("Processed", result.get("processed", 0))
+            result_cols[3].metric("Matched", result.get("matched", 0))
+            result_cols[4].metric("Reviews created", result.get("reviews_created", 0))
+            if result.get("errors"):
+                with st.expander(f"Errors ({len(result['errors'])})"):
+                    for error in result["errors"]:
+                        st.write(f"• {error.get('error', error) if isinstance(error, dict) else error}")
             st.rerun()
 
     st.divider()
@@ -202,7 +214,12 @@ with tabs[3]:
                 f"{review['stock']} · {review['report_date']} · "
                 f"{review['ownership_pct']:.4f}% · confidence {review['confidence']:.0%}"
             )
-            st.link_button("Open source filing", review["source_url"])
+            filing_links = st.columns([1, 1, 4])
+            filing_links[0].link_button("Open source filing", review["source_url"])
+            if review.get("document_id"):
+                filing_links[1].link_button(
+                    "View stored copy", disclosure_document_url(review["document_id"])
+                )
             default_id = review["proposed_investor_id"]
             names = list(profile_options)
             default_index = next(

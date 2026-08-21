@@ -12,7 +12,7 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Instrument, InvestorDisclosure
+from .models import DisclosureDocument, Instrument, InvestorDisclosure
 
 
 CONFIG_DIR = Path(__file__).with_name("followed_investors")
@@ -186,6 +186,17 @@ def build_investor_signals(db: Session, as_of: date | None = None) -> dict:
             "source_type": latest.source_type,
         })
     activity.sort(key=lambda item: (item["report_date"], item["company_name"]), reverse=True)
+
+    # Map each disclosure's source_url back to the stored raw filing (if any) so the UI can
+    # link to our own retained copy alongside the external source_url.
+    source_urls = {item["source_url"] for item in activity if item["source_url"]}
+    document_ids_by_url = {
+        row.source_url: row.id for row in db.scalars(select(DisclosureDocument).where(
+            DisclosureDocument.source_url.in_(source_urls)
+        )).all()
+    } if source_urls else {}
+    for item in activity:
+        item["document_id"] = document_ids_by_url.get(item["source_url"])
 
     rows = []
     for instrument_id in sorted(instrument_ids, key=lambda value: instruments[value].company_name):

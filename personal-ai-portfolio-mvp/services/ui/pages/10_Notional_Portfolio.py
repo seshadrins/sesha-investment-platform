@@ -70,7 +70,13 @@ with tabs[0]:
             "Latest price": item["price"], "Price date": item["price_date"],
             "Market value": item["market_value"], "Unrealised P&L": item["unrealised_profit"],
             "Weight": item["weight"] * 100 if item["weight"] is not None else None} for item in holdings])
-        st.dataframe(frame, width="stretch", hide_index=True)
+        st.dataframe(frame, width="stretch", hide_index=True, column_config={
+            "Average cost": st.column_config.NumberColumn(format="₹%.2f"),
+            "Latest price": st.column_config.NumberColumn(format="₹%.2f"),
+            "Market value": st.column_config.NumberColumn(format="₹%.2f"),
+            "Unrealised P&L": st.column_config.NumberColumn(format="₹%.2f"),
+            "Weight": st.column_config.NumberColumn(format="%.2f%%"),
+        })
         holding_options = {f"{item['stock']} — {item['company_name']}": item for item in holdings}
         with st.form("trade_holding"):
             label = st.selectbox("Holding", list(holding_options))
@@ -117,7 +123,10 @@ with tabs[2]:
             "Target price date": item["target_price_date"], "Execution date": item["execution_date"],
             "Quantity": item["quantity"], "Price": item["execution_price"], "Charges": item["charges"],
             "Reason": item["user_reason"], "Error": item["error"]} for item in transactions]),
-            width="stretch", hide_index=True)
+            width="stretch", hide_index=True, column_config={
+                "Price": st.column_config.NumberColumn(format="₹%.2f"),
+                "Charges": st.column_config.NumberColumn(format="₹%.2f"),
+            })
         with st.expander("Recommendation evidence retained with trades"):
             for item in transactions:
                 if item["recommendation_snapshot"]:
@@ -131,7 +140,10 @@ with tabs[3]:
         series = ["value", "net_contributions"]
         if "benchmark_value" in history.columns: series.append("benchmark_value")
         st.line_chart(history.set_index("date")[series])
-        st.dataframe(history, width="stretch", hide_index=True)
+        st.dataframe(history, width="stretch", hide_index=True, column_config={
+            column: st.column_config.NumberColumn(format="₹%.2f") for column in
+            ("value", "net_contributions", "benchmark_value") if column in history.columns
+        })
     for limitation in performance["limitations"]: st.caption(f"• {limitation}")
 
 with tabs[4]:
@@ -149,12 +161,19 @@ with tabs[4]:
             for horizon in ("3m", "6m", "12m"):
                 result = item["horizons"][horizon]
                 row[f"{horizon} status"] = result["status"]
-                row[f"{horizon} return"] = result.get("forward_return")
-                row[f"{horizon} relative"] = result.get("benchmark_relative_return")
-                row[f"{horizon} MAE"] = result.get("maximum_adverse_excursion")
-                row[f"{horizon} MFE"] = result.get("maximum_favourable_excursion")
+                for suffix, key in (
+                    ("return", "forward_return"), ("relative", "benchmark_relative_return"),
+                    ("MAE", "maximum_adverse_excursion"), ("MFE", "maximum_favourable_excursion"),
+                ):
+                    value = result.get(key)
+                    row[f"{horizon} {suffix}"] = value * 100 if value is not None else None
             outcome_rows.append(row)
-        st.dataframe(pd.DataFrame(outcome_rows), width="stretch", hide_index=True)
+        outcome_df = pd.DataFrame(outcome_rows)
+        percent_columns = [column for column in outcome_df.columns
+                           if column.endswith((" return", " relative", " MAE", " MFE"))]
+        st.dataframe(outcome_df, width="stretch", hide_index=True, column_config={
+            column: st.column_config.NumberColumn(format="%.2f%%") for column in percent_columns
+        })
         st.subheader("12-month confidence calibration")
         if learning["calibration_12m"]:
             st.dataframe(pd.DataFrame([{"Confidence bucket": key, **value}

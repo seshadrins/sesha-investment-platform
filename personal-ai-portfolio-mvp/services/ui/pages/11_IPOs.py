@@ -43,15 +43,25 @@ with tabs[0]:
         board = st.selectbox("Board", ["UNCLASSIFIED", "MAINBOARD", "SME"], index=["UNCLASSIFIED","MAINBOARD","SME"].index(issue["board"]))
         linked_options=["None",*instrument_labels]; current_link=next((label for label,value in instrument_labels.items() if value==issue["instrument_id"]),"None")
         c1,c2,c3 = st.columns(3); symbol=c1.text_input("Listed symbol", value=issue["symbol"] or ""); exchange=c2.selectbox("Exchange", ["NSE","BSE"], index=1 if issue["exchange"]=="BSE" else 0); linked=c3.selectbox("Linked listed instrument", linked_options, index=linked_options.index(current_link))
-        d1,d2,d3=st.columns(3); open_date=d1.text_input("Issue open YYYY-MM-DD", value=issue["issue_open_date"] or ""); close_date=d2.text_input("Issue close YYYY-MM-DD", value=issue["issue_close_date"] or ""); listing_date=d3.text_input("Listing YYYY-MM-DD", value=issue["listing_date"] or "")
-        p1,p2,p3=st.columns(3); low=p1.number_input("Price band low", min_value=0.0, value=float(issue["price_band_low"] or 0)); high=p2.number_input("Price band high", min_value=0.0, value=float(issue["price_band_high"] or 0)); price=p3.number_input("Final issue price", min_value=0.0, value=float(issue["issue_price"] or 0))
-        lot=st.number_input("Market lot", min_value=0, value=int(issue["lot_size"] or 0)); save=st.form_submit_button("Save verified issue details")
+        d1,d2,d3=st.columns(3)
+        open_date=d1.date_input("Issue open", value=date.fromisoformat(issue["issue_open_date"]) if issue["issue_open_date"] else None)
+        close_date=d2.date_input("Issue close", value=date.fromisoformat(issue["issue_close_date"]) if issue["issue_close_date"] else None)
+        listing_date=d3.date_input("Listing", value=date.fromisoformat(issue["listing_date"]) if issue["listing_date"] else None)
+        p1,p2,p3=st.columns(3)
+        # value=None (not 0) so a field left unset stays None instead of silently becoming
+        # a real 0 price/lot on save.
+        low=p1.number_input("Price band low", min_value=0.0, value=float(issue["price_band_low"]) if issue["price_band_low"] is not None else None)
+        high=p2.number_input("Price band high", min_value=0.0, value=float(issue["price_band_high"]) if issue["price_band_high"] is not None else None)
+        price=p3.number_input("Final issue price", min_value=0.0, value=float(issue["issue_price"]) if issue["issue_price"] is not None else None)
+        lot=st.number_input("Market lot", min_value=0, value=int(issue["lot_size"]) if issue["lot_size"] is not None else None); save=st.form_submit_button("Save verified issue details")
     if save:
         body={"stage":stage,"board":board,"symbol":symbol or None,"exchange":exchange,
               "instrument_id":None if linked=="None" else instrument_labels[linked],
-              "issue_open_date":open_date or None,"issue_close_date":close_date or None,
-              "listing_date":listing_date or None,"price_band_low":low or None,
-              "price_band_high":high or None,"issue_price":price or None,"lot_size":lot or None}
+              "issue_open_date":open_date.isoformat() if open_date else None,
+              "issue_close_date":close_date.isoformat() if close_date else None,
+              "listing_date":listing_date.isoformat() if listing_date else None,
+              "price_band_low":low, "price_band_high":high,
+              "issue_price":price, "lot_size":lot}
         if api_patch(f"/ipos/{ipo_id}", json=body): st.success("Issue details saved."); st.rerun()
 with tabs[1]:
     with st.form("ipo_document"):
@@ -86,5 +96,26 @@ with tabs[1]:
             if r.button("Reject IPO draft") and api_post(f"/ipo-analyses/{analysis['id']}/review", json={"decision":"REJECTED","note":note or None}): st.rerun()
 with tabs[2]:
     monitoring = api_get(f"/ipos/{ipo_id}/monitoring")
-    st.json(monitoring)
+    if monitoring["status"] in {"NOT_LISTED", "WAITING_FOR_PRICE"}:
+        st.info(f"Status: {monitoring['status'].replace('_', ' ').title()}")
+    else:
+        mcols = st.columns(4)
+        mcols[0].metric("Days since listing", monitoring.get("days_since_listing"))
+        mcols[1].metric("Latest price", f"₹{monitoring['latest_price']:.2f}"
+                         if monitoring.get("latest_price") is not None else "—")
+        mcols[2].metric("Return from issue", f"{monitoring['return_from_issue'] * 100:.2f}%"
+                         if monitoring.get("return_from_issue") is not None else "—")
+        mcols[3].metric("Max drawdown from issue", f"{monitoring['maximum_drawdown_from_issue'] * 100:.2f}%"
+                         if monitoring.get("maximum_drawdown_from_issue") is not None else "—")
+        milestones = monitoring.get("milestones") or []
+        if milestones:
+            st.dataframe(pd.DataFrame([{
+                "Days": m["days"], "Target date": m["target_date"], "Status": m["status"],
+                "Observed date": m["observed_date"],
+                "Return from issue": m["return_from_issue"] * 100 if m["return_from_issue"] is not None else None,
+            } for m in milestones]), width="stretch", hide_index=True, column_config={
+                "Return from issue": st.column_config.NumberColumn(format="%.2f%%"),
+            })
+        for limitation in monitoring.get("limitations", []):
+            st.caption(f"• {limitation}")
     st.warning("First-year evidence is limited. Verify issue-price, adjusted prices, proceeds use, lock-ins, and corporate actions before acting.")

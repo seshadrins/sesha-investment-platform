@@ -122,6 +122,9 @@ services:
       context: ./services/ui
     environment:
       API_BASE_URL: ${API_BASE_URL:-http://api:8000}
+      # Used for links the user's own browser navigates to directly (not server-side calls),
+      # so it must resolve from their machine, not just inside the Docker network.
+      PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://localhost:8000}
       APP_TITLE: ${APP_TITLE:-Personal AI Portfolio Manager}
     depends_on:
       - api

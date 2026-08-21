@@ -38,10 +38,25 @@ if not instruments:
     st.info("Add or discover an instrument to begin.")
     st.stop()
 
+# Consumed once: a deep link from the dashboard's Summary & Recommendation tab pre-selects
+# both the correct scope tab and the stock itself.
+deep_link_symbol = st.session_state.pop("deep_link_symbol", None)
+deep_link_instrument = next(
+    (item for item in instruments if instrument_label(item).startswith(deep_link_symbol)), None
+) if deep_link_symbol else None
+
+scope_options = ["Owned stocks", "Prospective · Strong Buy", "Other research and candidates"]
+default_scope_index = 0
+if deep_link_instrument:
+    if deep_link_instrument["id"] in owned_ids:
+        default_scope_index = 0
+    elif deep_link_instrument["id"] in prospective_ids:
+        default_scope_index = 1
+    else:
+        default_scope_index = 2
+
 scope = st.radio(
-    "Analysis view",
-    ["Owned stocks", "Prospective · Strong Buy", "Other research and candidates"],
-    horizontal=True,
+    "Analysis view", scope_options, index=default_scope_index, horizontal=True,
     help="NIFTY 500 candidates remain in the research pool unless they pass the Strong Buy screen.",
 )
 if scope == "Owned stocks":
@@ -72,7 +87,10 @@ if scope == "Prospective · Strong Buy":
 
 instrument_map = {instrument_label(item): item for item in visible_instruments}
 labels = list(instrument_map)
-default_index = next((index for index, label in enumerate(labels) if "VAIGLO" in label), 0)
+default_index = next(
+    (index for index, label in enumerate(labels) if deep_link_symbol and label.startswith(deep_link_symbol)),
+    0,
+)
 selected = instrument_map[st.selectbox("Company to analyse", labels, index=default_index)]
 
 c1, c2 = st.columns([1, 3])
