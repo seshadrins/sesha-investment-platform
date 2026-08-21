@@ -56,6 +56,7 @@ def render_scope(workbench, rows, scope, account_positions=None):
                             else account_positions.get(row["instrument_id"], {}).get("account_name", ""),
                 "Quantity": portfolio_field(row, "quantity"),
                 "Average cost": portfolio_field(row, "average_cost"),
+                "Value at cost": portfolio_field(row, "remaining_cost"),
                 "Current price": portfolio_field(row, "current_price"),
                 "Market value": portfolio_field(row, "market_value"),
                 "Unrealised P&L": portfolio_field(row, "unrealised_profit"),
@@ -67,6 +68,7 @@ def render_scope(workbench, rows, scope, account_positions=None):
             column_config = {
                 "Quantity": st.column_config.NumberColumn(format="%.4f"),
                 "Average cost": st.column_config.NumberColumn(format="₹%.2f"),
+                "Value at cost": st.column_config.NumberColumn(format="₹%.2f"),
                 "Current price": st.column_config.NumberColumn(format="₹%.2f"),
                 "Market value": st.column_config.NumberColumn(format="₹%.2f"),
                 "Unrealised P&L": st.column_config.NumberColumn(format="₹%.2f"),

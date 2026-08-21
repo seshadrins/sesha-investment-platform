@@ -88,6 +88,7 @@ with tabs[0]:
                 "account_name": selected_meta["name"],
                 "quantity": item["quantity"],
                 "average_cost": item["average_cost"],
+                "remaining_cost": cost_basis,
                 "current_price": item["price"],
                 "market_value": item["market_value"],
                 "unrealised_profit": item["unrealised_profit"],

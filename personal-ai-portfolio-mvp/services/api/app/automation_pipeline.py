@@ -351,6 +351,7 @@ def _build_stock_workbench(db: Session):
                 "accounts": scope_data.get("accounts", []),
                 "quantity": scope_data.get("quantity"),
                 "average_cost": scope_data.get("average_cost"),
+                "remaining_cost": scope_data.get("remaining_cost"),
                 "current_price": scope_data.get("current_price", float(latest_price.close_price)
                                                    if latest_price else None),
                 "price_date": scope_data.get("price_date", latest_price.price_date.isoformat()
