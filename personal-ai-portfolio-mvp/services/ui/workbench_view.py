@@ -3,9 +3,35 @@ import streamlit as st
 
 TABLE_HEIGHT = 650
 
+# Same hex values as Financial Analysis's score coloring (Changes-SetA Phase 5), for a
+# consistent green/red vocabulary across the dashboard.
+_GREEN, _RED = "#22c55e", "#ef4444"
+
 
 def stock_name(row):
     return f"{row['exchange']}:{row['symbol']}"
+
+
+def _price_move_marker(current, previous):
+    """Blank rather than a guess when there's no prior stored close yet (new instrument,
+    cold start) — an absent arrow reads as "unknown", a stale/wrong arrow would not."""
+    if current is None or previous is None:
+        return ""
+    if current > previous:
+        return "▲"
+    if current < previous:
+        return "▼"
+    return ""
+
+
+def _highlight_price_move(row):
+    styles = [""] * len(row)
+    marker = row.get("Chg")
+    if marker == "▲":
+        styles[row.index.get_loc("Chg")] = f"color: {_GREEN}; font-weight: 700;"
+    elif marker == "▼":
+        styles[row.index.get_loc("Chg")] = f"color: {_RED}; font-weight: 700;"
+    return styles
 
 
 def render_table(frame, column_config=None):
@@ -58,6 +84,9 @@ def render_scope(workbench, rows, scope, account_positions=None):
                 "Average cost": portfolio_field(row, "average_cost"),
                 "Value at cost": portfolio_field(row, "remaining_cost"),
                 "Current price": portfolio_field(row, "current_price"),
+                "Chg": _price_move_marker(
+                    portfolio_field(row, "current_price"), portfolio_field(row, "previous_close")
+                ),
                 "Market value": portfolio_field(row, "market_value"),
                 "Unrealised P&L": portfolio_field(row, "unrealised_profit"),
                 "Return": (portfolio_field(row, "return_pct") or 0) * 100
@@ -70,6 +99,11 @@ def render_scope(workbench, rows, scope, account_positions=None):
                 "Average cost": st.column_config.NumberColumn(format="₹%.2f"),
                 "Value at cost": st.column_config.NumberColumn(format="₹%.2f"),
                 "Current price": st.column_config.NumberColumn(format="₹%.2f"),
+                "Chg": st.column_config.TextColumn(
+                    width="small",
+                    help="▲ price rose versus the previous stored close · ▼ price fell · "
+                         "blank when no prior close is stored yet",
+                ),
                 "Market value": st.column_config.NumberColumn(format="₹%.2f"),
                 "Unrealised P&L": st.column_config.NumberColumn(format="₹%.2f"),
                 "Return": st.column_config.NumberColumn(format="%.2f%%"),
@@ -89,8 +123,11 @@ def render_scope(workbench, rows, scope, account_positions=None):
         if frame.empty:
             st.info("No rows are available for this view.")
         else:
+            display_frame = (
+                frame.style.apply(_highlight_price_move, axis=1) if scope == "OWNED" else frame
+            )
             event = st.dataframe(
-                frame, width="stretch", height=TABLE_HEIGHT, hide_index=True,
+                display_frame, width="stretch", height=TABLE_HEIGHT, hide_index=True,
                 column_config=column_config, on_select="rerun",
                 selection_mode="single-row", key=f"portfolio_select_{scope}",
             )

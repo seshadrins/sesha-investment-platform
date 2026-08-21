@@ -75,11 +75,25 @@ portfolio_raw = api_get("/portfolio") or {}
 all_positions = portfolio_raw.get("positions", [])
 account_names = sorted({p["account_name"] for p in all_positions})
 
-account_filter_col, _ = st.columns([2, 4])
+account_filter_col, sync_prices_col, _ = st.columns([2, 2, 2])
 selected_account = account_filter_col.selectbox(
     "Account view", ["All accounts"] + account_names,
     help="Filter the dashboard to a single account's own holdings, cost, and weight.",
 )
+sync_prices_col.markdown("<div style='height:1.85rem'></div>", unsafe_allow_html=True)
+if sync_prices_col.button(
+    "Sync prices only", width="stretch",
+    help="Refresh stored closing prices for owned and Strong Buy prospective stocks "
+         "without running the rest of the morning automation.",
+):
+    with st.spinner("Syncing prices…"):
+        synced = api_post("/analysis-schedule/run?job=prices", timeout=900)
+    if synced:
+        st.success(
+            f"Prices refreshed for {synced['owned']} owned and "
+            f"{synced['prospective']} prospective stocks."
+        )
+        st.rerun()
 
 owned_rows = workbench["owned"]
 account_positions = None

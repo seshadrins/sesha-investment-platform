@@ -73,6 +73,26 @@ def portfolio_snapshot(db: Session) -> dict:
     ).scalars().all()
     price_map = {p.instrument_id: p for p in latest_prices}
 
+    # Second-most-recent stored close per instrument, for the dashboard's up/down price
+    # marker — a plain "max date strictly before the latest date" subquery, the same shape
+    # as latest_price_subq above rather than a window function, so a stock with only one
+    # stored price naturally maps to no entry here instead of needing special-casing.
+    previous_price_subq = (
+        select(Price.instrument_id, func.max(Price.price_date).label("prev_date"))
+        .join(latest_price_subq, Price.instrument_id == latest_price_subq.c.instrument_id)
+        .where(Price.price_date < latest_price_subq.c.max_date)
+        .group_by(Price.instrument_id)
+        .subquery()
+    )
+    previous_prices = db.execute(
+        select(Price).join(
+            previous_price_subq,
+            (Price.instrument_id == previous_price_subq.c.instrument_id)
+            & (Price.price_date == previous_price_subq.c.prev_date),
+        )
+    ).scalars().all()
+    previous_price_map = {p.instrument_id: p for p in previous_prices}
+
     provisional = []
     total_market_value = Decimal("0")
     total_cost = Decimal("0")
@@ -88,6 +108,7 @@ def portfolio_snapshot(db: Session) -> dict:
 
         price_obj = price_map.get(instrument_id)
         current_price = Decimal(price_obj.close_price) if price_obj else None
+        previous_price_obj = previous_price_map.get(instrument_id)
         market_value = result.quantity * current_price if current_price else None
         if market_value is not None:
             total_market_value += market_value
@@ -120,6 +141,9 @@ def portfolio_snapshot(db: Session) -> dict:
                 "remaining_cost": float(result.remaining_cost),
                 "current_price": float(current_price) if current_price else None,
                 "price_date": price_obj.price_date.isoformat() if price_obj else None,
+                "previous_close": (
+                    float(previous_price_obj.close_price) if previous_price_obj else None
+                ),
                 "market_value_decimal": market_value,
                 "market_value": float(market_value) if market_value is not None else None,
                 "unrealised_profit": float(unrealised) if unrealised is not None else None,

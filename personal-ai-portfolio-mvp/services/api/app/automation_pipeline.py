@@ -284,6 +284,7 @@ def _build_stock_workbench(db: Session):
             "market_value": 0.0, "unrealised_profit": 0.0,
             "realised_profit": 0.0, "dividend_income": 0.0, "weight": 0.0,
             "current_price": position["current_price"], "price_date": position["price_date"],
+            "previous_close": position["previous_close"],
             "holding_days": position["holding_days"], "thesis_status": position["thesis_status"],
             "recommendation": position["recommendation"], "recommendation_reasons": [],
         })
@@ -324,9 +325,11 @@ def _build_stock_workbench(db: Session):
         analysis = build_financial_analysis(db, instrument)
         evaluations = evaluate_current_styles(db, instrument)
         thesis = db.scalar(select(Thesis).where(Thesis.instrument_id == instrument_id))
-        latest_price = db.scalar(select(Price).where(
+        recent_prices = db.scalars(select(Price).where(
             Price.instrument_id == instrument_id
-        ).order_by(Price.price_date.desc(), Price.id.desc()))
+        ).order_by(Price.price_date.desc(), Price.id.desc()).limit(2)).all()
+        latest_price = recent_prices[0] if recent_prices else None
+        previous_price = recent_prices[1] if len(recent_prices) > 1 else None
         recommendation = scope_data["recommendation"]
         reasons = scope_data["recommendation_reasons"]
         matched_styles = [item["style_name"] for item in evaluations
@@ -356,6 +359,8 @@ def _build_stock_workbench(db: Session):
                                                    if latest_price else None),
                 "price_date": scope_data.get("price_date", latest_price.price_date.isoformat()
                                                 if latest_price else None),
+                "previous_close": scope_data.get("previous_close", float(previous_price.close_price)
+                                                    if previous_price else None),
                 "market_value": scope_data.get("market_value"),
                 "unrealised_profit": scope_data.get("unrealised_profit"),
                 "return_pct": scope_data.get("return_pct"),
