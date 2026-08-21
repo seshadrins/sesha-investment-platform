@@ -24,63 +24,47 @@ focus_ids = owned_ids | prospective_ids
 focus_instruments = [item for item in instruments if item["id"] in focus_ids]
 analysis_instruments = focus_instruments or instruments
 
-matrix_tab, screening_tab, evidence_tab, config_tab, backtest_tab = st.tabs([
-    "Owned vs prospective", "NIFTY 500 screening", "Rule evidence",
-    "Style configuration", "Point-in-time backtest",
+evidence_tab, screening_tab, config_tab, backtest_tab, matrix_tab = st.tabs([
+    "Rule evidence", "NIFTY 500 screening", "Style configuration",
+    "Point-in-time backtest", "Owned vs prospective",
 ])
 
-
-def matrix_frame(rows, style_definitions):
-    output = []
-    for row in rows:
-        display = {
-            "Stock": f"{row['exchange']}:{row['symbol']}",
-            "Company": row["company_name"],
-            "Sector": row["sector"] or "Not classified",
-        }
-        for style in style_definitions:
-            cell = row["styles"][style["id"]]
-            if cell["status"] in {"MATCH", "NO_MATCH"}:
-                value = f"{cell['status'].replace('_', ' ')} · {cell['score']:.0f}"
-            else:
-                value = cell["status"].replace("_", " ")
-            display[f"{style['name']} v{style['version']}"] = value
-        output.append(display)
-    return pd.DataFrame(output)
-
-
-with matrix_tab:
-    matrix = api_get("/investor-styles/matrix")
-    owned_rows = [row for row in matrix["rows"] if row["universe"] == "OWNED"]
-    prospective_rows = [row for row in matrix["rows"] if row["universe"] == "PROSPECTIVE"]
-    owned_view, prospective_view = st.tabs([
-        f"Owned stocks ({len(owned_rows)})", f"Prospective · Strong Buy ({len(prospective_rows)})"
-    ])
-    with owned_view:
-        st.caption("Portfolio recommendations include Buy More, Hold, Review, Trim, Sell, or Strong Sell based on portfolio and thesis rules.")
-        owned_df = matrix_frame(owned_rows, matrix["styles"])
-        if owned_df.empty:
-            st.info("No currently owned stocks were found.")
-        else:
-            st.dataframe(owned_df, width="stretch", hide_index=True, height=440)
-            st.download_button("Download owned matrix", owned_df.to_csv(index=False).encode("utf-8"),
-                               file_name="owned_stock_style_matrix.csv", mime="text/csv")
-    with prospective_view:
-        st.caption("Only non-owned companies that currently satisfy the Strong Buy gate appear here.")
-        if not prospectives:
-            st.info("No Strong Buy candidate has passed the NIFTY 500 screen yet.")
-        else:
-            recommendation_df = pd.DataFrame([{
-                "Stock": f"{item['exchange']}:{item['symbol']}",
-                "Company": item["company_name"],
-                "Recommendation": item["recommendation"].replace("_", " "),
-                "Financial score": item["financial_score"],
-                "Style matches": item["style_matches"],
-                "Why": " ".join(item["recommendation_reasons"]),
-            } for item in prospectives])
-            st.dataframe(recommendation_df, width="stretch", hide_index=True)
-            prospective_df = matrix_frame(prospective_rows, matrix["styles"])
-            st.dataframe(prospective_df, width="stretch", hide_index=True, height=440)
+with evidence_tab:
+    if not analysis_instruments:
+        st.info("Add a holding or run the screener before inspecting rule evidence.")
+    else:
+        instrument_map = {instrument_label(item): item for item in analysis_instruments}
+        labels = list(instrument_map)
+        # Consumed once: a deep link from the dashboard's Summary & Recommendation tab
+        # pre-selects this stock (open this tab to see it applied).
+        deep_link_symbol = st.session_state.pop("deep_link_symbol", None)
+        default_index = next(
+            (index for index, label in enumerate(labels) if deep_link_symbol and label.startswith(deep_link_symbol)),
+            0,
+        )
+        selected = instrument_map[st.selectbox(
+            "Company", labels, index=default_index, key="evidence_company"
+        )]
+        st.subheader(f"Rule evidence for {selected['symbol']}")
+        evaluations = api_get(f"/investor-styles/evaluate/{selected['id']}")
+        if not evaluations:
+            st.info("Sync this company on Financial Analysis before evaluating styles.")
+        for result in evaluations:
+            with st.container(border=True):
+                c1, c2, c3, c4 = st.columns(4)
+                c1.subheader(result["style_name"])
+                c2.metric("Score", f"{result['score']:.0f}/100")
+                c3.metric("Evidence coverage", f"{result['coverage']:.0f}%")
+                c4.metric("Result", "MATCH" if result["matches"] else "NO MATCH")
+                if not result["applicable"]:
+                    st.warning("This style is not applicable to financial-sector companies.")
+                rule_rows = [{
+                    "Rule": rule["label"], "Observed": rule["actual"],
+                    "Threshold": f"{rule['operator']} {rule['value']}",
+                    "Result": "NO DATA" if rule["passed"] is None else "PASS" if rule["passed"] else "FAIL",
+                    "Weight": rule["weight"],
+                } for rule in result["rules"]]
+                st.dataframe(pd.DataFrame(rule_rows), width="stretch", hide_index=True)
 
 with screening_tab:
     universes = api_get("/screening-universes")
@@ -152,43 +136,6 @@ with screening_tab:
             st.download_button("Download screening audit", result_df.to_csv(index=False).encode("utf-8"),
                                file_name="nifty500_screening_audit.csv", mime="text/csv")
 
-with evidence_tab:
-    if not analysis_instruments:
-        st.info("Add a holding or run the screener before inspecting rule evidence.")
-    else:
-        instrument_map = {instrument_label(item): item for item in analysis_instruments}
-        labels = list(instrument_map)
-        # Consumed once: a deep link from the dashboard's Summary & Recommendation tab
-        # pre-selects this stock (open this tab to see it applied).
-        deep_link_symbol = st.session_state.pop("deep_link_symbol", None)
-        default_index = next(
-            (index for index, label in enumerate(labels) if deep_link_symbol and label.startswith(deep_link_symbol)),
-            0,
-        )
-        selected = instrument_map[st.selectbox(
-            "Company", labels, index=default_index, key="evidence_company"
-        )]
-        st.subheader(f"Rule evidence for {selected['symbol']}")
-        evaluations = api_get(f"/investor-styles/evaluate/{selected['id']}")
-        if not evaluations:
-            st.info("Sync this company on Financial Analysis before evaluating styles.")
-        for result in evaluations:
-            with st.container(border=True):
-                c1, c2, c3, c4 = st.columns(4)
-                c1.subheader(result["style_name"])
-                c2.metric("Score", f"{result['score']:.0f}/100")
-                c3.metric("Evidence coverage", f"{result['coverage']:.0f}%")
-                c4.metric("Result", "MATCH" if result["matches"] else "NO MATCH")
-                if not result["applicable"]:
-                    st.warning("This style is not applicable to financial-sector companies.")
-                rule_rows = [{
-                    "Rule": rule["label"], "Observed": rule["actual"],
-                    "Threshold": f"{rule['operator']} {rule['value']}",
-                    "Result": "NO DATA" if rule["passed"] is None else "PASS" if rule["passed"] else "FAIL",
-                    "Weight": rule["weight"],
-                } for rule in result["rules"]]
-                st.dataframe(pd.DataFrame(rule_rows), width="stretch", hide_index=True)
-
 with config_tab:
     st.write("Styles live in version-controlled YAML files. Increment the version after changing a threshold.")
     style_map = {style["name"]: style for style in styles}
@@ -256,5 +203,58 @@ with backtest_tab:
                 )
                 for limitation in result["limitations"]:
                     st.write(f"• {limitation}")
+
+
+def matrix_frame(rows, style_definitions):
+    output = []
+    for row in rows:
+        display = {
+            "Stock": f"{row['exchange']}:{row['symbol']}",
+            "Company": row["company_name"],
+            "Sector": row["sector"] or "Not classified",
+        }
+        for style in style_definitions:
+            cell = row["styles"][style["id"]]
+            if cell["status"] in {"MATCH", "NO_MATCH"}:
+                value = f"{cell['status'].replace('_', ' ')} · {cell['score']:.0f}"
+            else:
+                value = cell["status"].replace("_", " ")
+            display[f"{style['name']} v{style['version']}"] = value
+        output.append(display)
+    return pd.DataFrame(output)
+
+
+with matrix_tab:
+    matrix = api_get("/investor-styles/matrix")
+    owned_rows = [row for row in matrix["rows"] if row["universe"] == "OWNED"]
+    prospective_rows = [row for row in matrix["rows"] if row["universe"] == "PROSPECTIVE"]
+    owned_view, prospective_view = st.tabs([
+        f"Owned stocks ({len(owned_rows)})", f"Prospective · Strong Buy ({len(prospective_rows)})"
+    ])
+    with owned_view:
+        st.caption("Portfolio recommendations include Buy More, Hold, Review, Trim, Sell, or Strong Sell based on portfolio and thesis rules.")
+        owned_df = matrix_frame(owned_rows, matrix["styles"])
+        if owned_df.empty:
+            st.info("No currently owned stocks were found.")
+        else:
+            st.dataframe(owned_df, width="stretch", hide_index=True, height=440)
+            st.download_button("Download owned matrix", owned_df.to_csv(index=False).encode("utf-8"),
+                               file_name="owned_stock_style_matrix.csv", mime="text/csv")
+    with prospective_view:
+        st.caption("Only non-owned companies that currently satisfy the Strong Buy gate appear here.")
+        if not prospectives:
+            st.info("No Strong Buy candidate has passed the NIFTY 500 screen yet.")
+        else:
+            recommendation_df = pd.DataFrame([{
+                "Stock": f"{item['exchange']}:{item['symbol']}",
+                "Company": item["company_name"],
+                "Recommendation": item["recommendation"].replace("_", " "),
+                "Financial score": item["financial_score"],
+                "Style matches": item["style_matches"],
+                "Why": " ".join(item["recommendation_reasons"]),
+            } for item in prospectives])
+            st.dataframe(recommendation_df, width="stretch", hide_index=True)
+            prospective_df = matrix_frame(prospective_rows, matrix["styles"])
+            st.dataframe(prospective_df, width="stretch", hide_index=True, height=440)
 
 st.warning("Research support only. Strong Buy is a rules-based screen, not personalised investment advice.")
