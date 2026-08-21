@@ -42,35 +42,6 @@ if recommendation_alerts:
             st.rerun()
 
 snapshot = workbench["snapshot"]
-schedule = snapshot["schedule"]
-schedule_info, force_choice, force_action = st.columns([4, 2, 1])
-schedule_info.caption(
-    f"Cached analysis generated {snapshot['generated_at']} · scheduled {schedule['days']} at "
-    f"{schedule['hour']:02d}:{schedule['minute']:02d} {schedule['timezone']}"
-)
-force_options = {
-    "All due morning activities": "morning",
-    "Prices only": "prices",
-    "Financial statements due": "fundamentals",
-    "Next NIFTY 500 batch": "screening",
-    "NIFTY constituents": "constituents",
-    "Investor disclosure check": "disclosures",
-    "Dashboard snapshot only": "snapshot",
-}
-selected_force = force_choice.selectbox(
-    "Forced run scope", list(force_options), label_visibility="collapsed"
-)
-if force_action.button("Run now", type="secondary", width="stretch"):
-    with st.spinner(f"Running {selected_force.lower()}…"):
-        forced = api_post(
-            f"/analysis-schedule/run?job={force_options[selected_force]}", timeout=900
-        )
-    if forced:
-        st.success(
-            f"Analysis refreshed for {forced['owned']} owned and "
-            f"{forced['prospective']} prospective stocks."
-        )
-        st.rerun()
 
 # Compact health banner: only rendered when something's actually wrong. Full schedule,
 # metrics, and run history live on the System Status page so they don't push the stock
@@ -82,8 +53,8 @@ if health and health["status"] in {"OVERDUE", "MISSED", "FAILED", "STALLED", "HE
         f"Scheduled analysis health: {health['status']}. Expected run: "
         f"{health['expected_scheduled_for']}. "
         + (f"Last error: {latest_error}. " if latest_error else "")
-        + "The scheduler will attempt bounded recovery; use ‘All due morning activities’ "
-          "and Run now if manual recovery is required. Full history: System Status page."
+        + "The scheduler will attempt bounded recovery; use System Status → Run now "
+          "if manual recovery is required."
     )
 elif health and health["status"] == "DEGRADED":
     st.warning("The morning run completed partially. Failed activities are queued for bounded retry. "
@@ -98,37 +69,6 @@ if snapshot["last_status"] == "FAILED":
         "The last scheduled refresh failed; the dashboard is showing the previous successful snapshot. "
         f"Error: {snapshot['last_error']}"
     )
-
-data_refresh = workbench.get("data_refresh", {})
-if data_refresh:
-    with st.expander("Today's data refresh details"):
-        market_refresh = data_refresh.get("market_prices")
-        if market_refresh:
-            st.caption(
-                f"Market refresh: {market_refresh['status']} · target {market_refresh.get('target_date')} · "
-                f"{market_refresh.get('prices_imported', 0)} prices stored"
-            )
-            market_errors = market_refresh.get("errors") or (
-                [market_refresh["error"]] if market_refresh.get("error") else []
-            )
-            for error in market_errors:
-                st.write(f"• {error}")
-        for key, label in (
-            ("financial_statements", "Financial statements"),
-            ("nifty500_screening", "NIFTY 500 screening"),
-            ("nifty500_constituents", "NIFTY 500 constituents"),
-            ("investor_disclosures", "Investor disclosures"),
-        ):
-            result = data_refresh.get(key)
-            if result:
-                detail = result.get("processed", result.get("constituents", ""))
-                suffix = f" · {detail} processed" if detail != "" else ""
-                if key == "investor_disclosures" and result.get("coverage_status"):
-                    progress = result.get("coverage_progress", {})
-                    suffix += (f" · coverage {result['coverage_status']} · "
-                               f"{progress.get('checked_mappings', 0)}/{progress.get('active_mappings', 0)} mappings")
-                st.caption(f"{label}: {result.get('status', 'UNKNOWN')}{suffix}")
-        st.page_link("pages/12_System_Status.py", label="Full automation schedule, metrics, and run history")
 
 
 def stock_name(row):
@@ -155,7 +95,7 @@ def render_scope(rows, scope, account_positions=None):
                 "No prospective stock currently passes the Strong Buy gate. "
                 "Continue the NIFTY 500 screen in Styles & Screening."
             )
-            st.page_link("pages/7_Investor_Styles.py", label="Open NIFTY 500 screening")
+            st.page_link("pages/5_Investor_Styles.py", label="Open NIFTY 500 screening")
         return
 
     st.caption(
@@ -331,10 +271,10 @@ def render_scope(rows, scope, account_positions=None):
                 jump_cols = st.columns([1, 1, 4])
                 if jump_cols[0].button("Open Financial Analysis", key=f"jump_financial_{scope}"):
                     st.session_state["deep_link_symbol"] = stock_name(selected_row)
-                    st.switch_page("pages/6_Financial_Analysis.py")
+                    st.switch_page("pages/4_Financial_Analysis.py")
                 if jump_cols[1].button("Open Investor Style Fit", key=f"jump_styles_{scope}"):
                     st.session_state["deep_link_symbol"] = stock_name(selected_row)
-                    st.switch_page("pages/7_Investor_Styles.py")
+                    st.switch_page("pages/5_Investor_Styles.py")
         st.download_button(
             f"Download {scope.lower()} summary",
             frame.to_csv(index=False).encode("utf-8"),
@@ -458,9 +398,9 @@ with prospective_tab:
 with st.expander("Manage data and workflows"):
     links = st.columns(7)
     links[0].page_link("pages/1_Portfolio_Setup.py", label="Portfolio Setup")
-    links[1].page_link("pages/3_Prices.py", label="Data Sources & Sync")
-    links[2].page_link("pages/6_Financial_Analysis.py", label="Financial Analysis")
-    links[3].page_link("pages/7_Investor_Styles.py", label="Styles & Screening")
-    links[4].page_link("pages/8_Followed_Investors.py", label="Followed Investors")
+    links[1].page_link("pages/10_Prices.py", label="Data Sources & Sync")
+    links[2].page_link("pages/4_Financial_Analysis.py", label="Financial Analysis")
+    links[3].page_link("pages/5_Investor_Styles.py", label="Styles & Screening")
+    links[4].page_link("pages/6_Followed_Investors.py", label="Followed Investors")
     links[5].page_link("pages/13_Watchlist_and_Strategy.py", label="Watchlist & Strategy")
     links[6].page_link("pages/12_System_Status.py", label="System Status")

@@ -128,16 +128,16 @@ def render_sidebar():
         st.markdown(
             "1. **Portfolio Setup** — accounts and opening data\n"
             "2. **Transactions** — buys, sells and income\n"
-            "3. **Prices** — valuations and Upstox sync\n"
-            "4. **Thesis & Review** — research decisions\n"
-            "5. **Reconcile** — compare with your broker\n"
-            "6. **Financial Analysis** — owned and Strong Buy prospects\n"
-            "7. **Investor Styles** — NIFTY 500 screen, rules, and backtests\n"
-            "8. **Followed Investors** — public-disclosure signals\n"
-            "9. **Document Analysis** — cited reports and transcripts"
-            "\n10. **Notional Portfolio** — simulated trades and performance"
-            "\n11. **IPOs** — pre-IPO evidence and first-year monitoring"
-            "\n12. **System Status** — automation schedule, metrics, and run history"
+            "3. **Thesis & Review** — research decisions\n"
+            "4. **Financial Analysis** — owned and Strong Buy prospects\n"
+            "5. **Investor Styles** — NIFTY 500 screen, rules, and backtests\n"
+            "6. **Followed Investors** — public-disclosure signals\n"
+            "7. **Document Analysis** — cited reports and transcripts\n"
+            "8. **Notional Portfolio** — simulated trades and performance\n"
+            "9. **IPOs** — pre-IPO evidence and first-year monitoring\n"
+            "10. **Prices** — valuations and Upstox sync\n"
+            "11. **Reconcile** — compare with your broker\n"
+            "12. **System Status** — automation schedule, metrics, and run history"
         )
         st.divider()
         st.caption("Read-only decision support. No orders are placed.")
