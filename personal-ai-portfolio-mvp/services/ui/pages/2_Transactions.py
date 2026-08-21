@@ -1,18 +1,15 @@
-from datetime import date
-
 import pandas as pd
 import streamlit as st
 
-from common import api_get, api_post, instrument_label, render_sidebar
+from common import api_get, api_post, render_sidebar
 
 render_sidebar()
 st.title("Transactions")
 st.caption("The immutable ledger is the source of truth. Corrections should use adjustment transactions with notes.")
 
-accounts = api_get("/accounts")
 instruments = api_get("/instruments")
 
-instrument_tab, transaction_tab, ledger_tab = st.tabs(["Instruments", "Record transaction", "Ledger"])
+instrument_tab, upload_tab, ledger_tab = st.tabs(["Instruments", "Upload transactions", "Ledger"])
 
 with instrument_tab:
     st.subheader("Instrument master")
@@ -39,36 +36,21 @@ with instrument_tab:
         st.dataframe(instruments, width="stretch", hide_index=True,
                      column_order=["exchange", "symbol", "company_name", "isin", "sector", "industry"])
 
-with transaction_tab:
-    if not accounts:
-        st.info("Create an account under Portfolio Setup first.")
-    elif not instruments:
-        st.info("Add an instrument before recording a transaction.")
-    else:
-        account_map = {f"{a['name']} — {a['broker_name']}": a["id"] for a in accounts}
-        instrument_map = {instrument_label(i): i["id"] for i in instruments}
-        with st.form("transaction_form"):
-            c1, c2 = st.columns(2)
-            account_label = c1.selectbox("Account", account_map)
-            instrument_text = c2.selectbox("Instrument", instrument_map)
-            tx_type = st.selectbox("Transaction type", ["BUY", "SELL", "DIVIDEND", "ADJUSTMENT_IN", "ADJUSTMENT_OUT"])
-            st.caption("Dividend: quantity = eligible shares, price = dividend per share. Adjustments should document the reason.")
-            c3, c4, c5 = st.columns(3)
-            trade_date = c3.date_input("Trade date", value=date.today())
-            quantity = c4.number_input("Quantity / eligible shares", min_value=0.0, step=1.0, format="%.6f")
-            price = c5.number_input("Unit price / dividend per share", min_value=0.0, step=1.0, format="%.4f")
-            charges = st.number_input("Total charges or withholding", min_value=0.0, step=1.0)
-            notes = st.text_area("Reason / notes", placeholder="Why was this transaction made?")
-            if st.form_submit_button("Record transaction", type="primary"):
-                if quantity <= 0:
-                    st.error("Quantity must be greater than zero.")
-                else:
-                    result = api_post("/transactions", json={"account_id": account_map[account_label],
-                        "instrument_id": instrument_map[instrument_text], "transaction_type": tx_type,
-                        "trade_date": trade_date.isoformat(), "quantity": quantity, "price": price,
-                        "charges": charges, "notes": notes or None})
-                    if result:
-                        st.success(f"Transaction recorded with ID {result['id']}.")
+with upload_tab:
+    st.subheader("Import transaction history")
+    st.write("Use this for buys, sells, dividends, and quantity adjustments after the opening date.")
+    st.download_button("Download transaction template", data=(
+        "account_name,broker_name,exchange,symbol,company_name,isin,transaction_type,trade_date,quantity,price,charges,notes\n"
+        "Primary,Upstox,NSE,INFY,Infosys Limited,INE009A01021,BUY,2026-08-01,5,1520,25,Additional purchase\n"
+    ), file_name="transactions_template.csv", mime="text/csv")
+    with st.expander("Transaction conventions"):
+        st.markdown("For dividends, enter shares eligible in `quantity`, dividend per share in `price`, and withholding/fees in `charges`. Adjustment rows change quantity and should include an explanatory note.")
+    transactions = st.file_uploader("Choose transactions CSV", type=["csv"], key="tx")
+    confirm_tx = st.checkbox("I understand this appends transactions and have checked for duplicates.", key="confirm_tx")
+    if st.button("Import transactions", type="primary", disabled=transactions is None or not confirm_tx):
+        result = api_post("/imports/transactions", files={"file": (transactions.name, transactions.getvalue(), "text/csv")})
+        if result:
+            st.success(f"Imported {result['imported']} transactions.")
 
 with ledger_tab:
     ledger = api_get("/transactions")

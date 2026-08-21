@@ -4,7 +4,7 @@ from common import api_get, api_patch, api_post, render_sidebar
 
 render_sidebar()
 st.title("Portfolio Setup")
-st.caption("Create accounts, then establish the auditable transaction ledger from CSV or manual entries.")
+st.caption("Create accounts, then import opening holdings. Ongoing transactions are uploaded on the Transactions page.")
 
 accounts = api_get("/accounts")
 instruments = api_get("/instruments")
@@ -12,7 +12,7 @@ c1, c2 = st.columns(2)
 c1.metric("Accounts", len(accounts))
 c2.metric("Instruments", len(instruments))
 
-account_tab, opening_tab, history_tab = st.tabs(["Accounts", "Opening holdings", "Transaction history"])
+account_tab, opening_tab = st.tabs(["Accounts", "Opening holdings"])
 
 with account_tab:
     st.subheader("Create an account")
@@ -67,19 +67,3 @@ with opening_tab:
         result = api_post("/imports/opening", files={"file": (opening.name, opening.getvalue(), "text/csv")})
         if result:
             st.success(f"Imported {result['imported']} opening holdings.")
-
-with history_tab:
-    st.subheader("Import transaction history")
-    st.write("Use this for buys, sells, dividends, and quantity adjustments after the opening date.")
-    st.download_button("Download transaction template", data=(
-        "account_name,broker_name,exchange,symbol,company_name,isin,transaction_type,trade_date,quantity,price,charges,notes\n"
-        "Primary,Upstox,NSE,INFY,Infosys Limited,INE009A01021,BUY,2026-08-01,5,1520,25,Additional purchase\n"
-    ), file_name="transactions_template.csv", mime="text/csv")
-    with st.expander("Transaction conventions"):
-        st.markdown("For dividends, enter shares eligible in `quantity`, dividend per share in `price`, and withholding/fees in `charges`. Adjustment rows change quantity and should include an explanatory note.")
-    transactions = st.file_uploader("Choose transactions CSV", type=["csv"], key="tx")
-    confirm_tx = st.checkbox("I understand this appends transactions and have checked for duplicates.", key="confirm_tx")
-    if st.button("Import transactions", type="primary", disabled=transactions is None or not confirm_tx):
-        result = api_post("/imports/transactions", files={"file": (transactions.name, transactions.getvalue(), "text/csv")})
-        if result:
-            st.success(f"Imported {result['imported']} transactions.")
