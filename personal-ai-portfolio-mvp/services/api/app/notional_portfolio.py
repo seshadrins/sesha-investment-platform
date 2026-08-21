@@ -19,9 +19,17 @@ ZERO = Decimal("0")
 
 
 def target_price_date(decision_at: datetime) -> date:
+    """Pick the close that couldn't have been known at decision time.
+
+    NSE closes 15:30 IST; by convention this system treats a day's close as
+    "public" from 16:00 IST onward. A decision made at/after 16:00 already
+    knows today's close, so it must settle against the next trading day's
+    (still unknown) close. A decision made before 16:00 doesn't yet know
+    today's close, so settling against today once it's observed is fair.
+    """
     aware = decision_at.replace(tzinfo=timezone.utc) if decision_at.tzinfo is None else decision_at
     local = aware.astimezone(ZoneInfo("Asia/Kolkata"))
-    return local.date() if local.time() >= time(16, 0) else local.date() + timedelta(days=1)
+    return local.date() + timedelta(days=1) if local.time() >= time(16, 0) else local.date()
 
 
 def _executed(db: Session, portfolio_id: int, through: date | None = None):

@@ -179,7 +179,7 @@ def render_table(frame, column_config=None):
     st.caption(f"Showing {len(frame)} stocks. Scroll inside the table to see additional rows.")
 
 
-def render_scope(rows, scope):
+def render_scope(rows, scope, account_positions=None):
     if not rows:
         if scope == "OWNED":
             st.info("No owned stocks were found. Use Portfolio Setup to add opening holdings.")
@@ -201,19 +201,26 @@ def render_scope(rows, scope):
 
     with portfolio_tab:
         if scope == "OWNED":
+            def portfolio_field(row, field):
+                if account_positions is not None:
+                    return account_positions.get(row["instrument_id"], {}).get(field)
+                return row["portfolio"][field]
+
             frame = pd.DataFrame([{
                 "Stock": stock_name(row),
                 "Company": row["company_name"],
-                "Accounts": ", ".join(row["portfolio"]["accounts"]),
-                "Quantity": row["portfolio"]["quantity"],
-                "Average cost": row["portfolio"]["average_cost"],
-                "Current price": row["portfolio"]["current_price"],
-                "Market value": row["portfolio"]["market_value"],
-                "Unrealised P&L": row["portfolio"]["unrealised_profit"],
-                "Return": row["portfolio"]["return_pct"] * 100
-                          if row["portfolio"]["return_pct"] is not None else None,
-                "Weight": row["portfolio"]["weight"] * 100
-                          if row["portfolio"]["weight"] is not None else None,
+                "Accounts": ", ".join(row["portfolio"]["accounts"])
+                            if account_positions is None
+                            else account_positions.get(row["instrument_id"], {}).get("account_name", ""),
+                "Quantity": portfolio_field(row, "quantity"),
+                "Average cost": portfolio_field(row, "average_cost"),
+                "Current price": portfolio_field(row, "current_price"),
+                "Market value": portfolio_field(row, "market_value"),
+                "Unrealised P&L": portfolio_field(row, "unrealised_profit"),
+                "Return": (portfolio_field(row, "return_pct") or 0) * 100
+                          if portfolio_field(row, "return_pct") is not None else None,
+                "Weight": (portfolio_field(row, "weight") or 0) * 100
+                          if portfolio_field(row, "weight") is not None else None,
                 "Thesis": row["portfolio"]["thesis_status"] or "Not recorded",
                 "Thesis summary": row["portfolio"]["thesis_reason"] or "Not recorded",
             } for row in rows])
@@ -341,12 +348,66 @@ def render_scope(rows, scope):
         st.warning("Decision support only. Verify source data, suitability, valuation, and risk before acting.")
 
 
+portfolio_raw = api_get("/portfolio") or {}
+all_positions = portfolio_raw.get("positions", [])
+account_names = sorted({p["account_name"] for p in all_positions})
+
+account_filter_col, _ = st.columns([2, 4])
+selected_account = account_filter_col.selectbox(
+    "Account view", ["All accounts"] + account_names,
+    help="Filter the dashboard to a single account's own holdings, cost, and weight.",
+)
+
+owned_rows = workbench["owned"]
+account_positions = None
+if selected_account != "All accounts":
+    filtered_positions = [p for p in all_positions if p["account_name"] == selected_account]
+    account_total_value = sum(
+        p["market_value"] for p in filtered_positions if p["market_value"] is not None
+    )
+    for p in filtered_positions:
+        p["weight"] = (
+            p["market_value"] / account_total_value
+            if p["market_value"] is not None and account_total_value
+            else None
+        )
+    account_positions = {p["instrument_id"]: p for p in filtered_positions}
+    owned_rows = [row for row in workbench["owned"] if row["instrument_id"] in account_positions]
+    summary = {
+        "remaining_cost": sum(p["remaining_cost"] for p in filtered_positions),
+        "market_value": sum(p["market_value"] for p in filtered_positions if p["market_value"] is not None),
+        "unrealised_profit": sum(
+            p["unrealised_profit"] for p in filtered_positions if p["unrealised_profit"] is not None
+        ),
+        "realised_profit": sum(p["realised_profit"] for p in filtered_positions),
+        "dividend_income": sum(p["dividend_income"] for p in filtered_positions),
+    }
+    summary["total_profit"] = (
+        summary["unrealised_profit"] + summary["realised_profit"] + summary["dividend_income"]
+    )
+else:
+    summary = workbench.get("summary")
+
+if summary:
+    summary_cols = st.columns(6)
+    summary_cols[0].metric("Purchase cost", f"₹{summary['remaining_cost']:,.0f}")
+    summary_cols[1].metric("Current value", f"₹{summary['market_value']:,.0f}")
+    summary_cols[2].metric("Unrealised P&L", f"₹{summary['unrealised_profit']:,.0f}")
+    summary_cols[3].metric("Realised P&L", f"₹{summary['realised_profit']:,.0f}")
+    summary_cols[4].metric("Dividend income", f"₹{summary['dividend_income']:,.0f}")
+    summary_cols[5].metric("Total profit", f"₹{summary['total_profit']:,.0f}")
+else:
+    st.caption(
+        "Total portfolio value isn't in the cached snapshot yet — use \"Dashboard snapshot "
+        "only\" and Run now above to refresh it."
+    )
+
 owned_tab, prospective_tab = st.tabs([
-    f"Owned stocks ({len(workbench['owned'])})",
+    f"Owned stocks ({len(owned_rows)})",
     f"Prospective · Strong Buy ({len(workbench['prospective'])})",
 ])
 with owned_tab:
-    render_scope(workbench["owned"], "OWNED")
+    render_scope(owned_rows, "OWNED", account_positions)
 with prospective_tab:
     render_scope(workbench["prospective"], "PROSPECTIVE")
 

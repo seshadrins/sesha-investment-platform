@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFi
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from .database import Base, apply_additive_migrations, engine, get_db
 from .models import (
@@ -158,6 +159,15 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+def _snapshot_or_409(db: Session) -> dict:
+    """portfolio_snapshot(), but a corrupt ledger row (e.g. an oversell) becomes a
+    clean 4xx instead of an unhandled 500 for every read that needs the snapshot."""
+    try:
+        return portfolio_snapshot(db)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @app.post("/accounts", response_model=AccountOut)
 def create_account(payload: AccountCreate, db: Session = Depends(get_db)):
     existing = db.scalar(select(Account).where(Account.name == payload.name))
@@ -206,7 +216,7 @@ def list_instruments(
         candidate_ids = set(db.scalars(select(UniverseMembership.instrument_id).where(
             UniverseMembership.active.is_(True)
         )).all())
-        owned_ids = {position["instrument_id"] for position in portfolio_snapshot(db)["positions"]}
+        owned_ids = {position["instrument_id"] for position in _snapshot_or_409(db)["positions"]}
         prospective_ids = set(db.scalars(select(WatchlistItem.instrument_id).where(
             WatchlistItem.status == "ACTIVE"
         )).all())
@@ -256,7 +266,7 @@ def archive_watchlist_item(instrument_id: int, db: Session = Depends(get_db)):
 
 @app.get("/prospective-stocks")
 def list_prospective_stocks(db: Session = Depends(get_db)):
-    owned_ids = {position["instrument_id"] for position in portfolio_snapshot(db)["positions"]}
+    owned_ids = {position["instrument_id"] for position in _snapshot_or_409(db)["positions"]}
     rows = db.execute(select(WatchlistItem, Instrument).join(
         Instrument, WatchlistItem.instrument_id == Instrument.id
     ).where(WatchlistItem.status == "ACTIVE").order_by(Instrument.company_name)).all()
@@ -304,7 +314,7 @@ def _screening_result_out(result: ScreeningResult, instrument: Instrument,
 
 @app.get("/screening-universes")
 def list_screening_universe_status(db: Session = Depends(get_db)):
-    owned_ids = {position["instrument_id"] for position in portfolio_snapshot(db)["positions"]}
+    owned_ids = {position["instrument_id"] for position in _snapshot_or_409(db)["positions"]}
     output = []
     for config in load_screening_universes():
         memberships = db.scalars(select(UniverseMembership).where(
@@ -386,7 +396,7 @@ def _screen_universe_batch(db: Session, universe_id: str, batch_size: int) -> di
         raise RuntimeError("UPSTOX_ANALYTICS_TOKEN is not configured.")
     config = get_screening_universe(universe_id)
 
-    owned_ids = {position["instrument_id"] for position in portfolio_snapshot(db)["positions"]}
+    owned_ids = {position["instrument_id"] for position in _snapshot_or_409(db)["positions"]}
     memberships = db.scalars(select(UniverseMembership).where(
         UniverseMembership.universe_id == universe_id,
         UniverseMembership.active.is_(True),
@@ -559,6 +569,20 @@ def list_transactions(db: Session = Depends(get_db)):
     ]
 
 
+@app.delete("/transactions/{transaction_id}")
+def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
+    """Void a transaction. The primary use case is recovering from a corrupt
+    ledger row (e.g. a same-day SELL recorded before its matching BUY) that
+    makes portfolio_snapshot() raise for every account/instrument group it
+    touches — this is the only in-app way to remove such a row."""
+    tx = db.get(Transaction, transaction_id)
+    if not tx:
+        raise HTTPException(404, "Transaction not found.")
+    db.delete(tx)
+    db.commit()
+    return {"deleted": transaction_id}
+
+
 @app.post("/prices")
 def upsert_price(payload: PriceCreate, db: Session = Depends(get_db)):
     item = db.scalar(
@@ -610,6 +634,7 @@ def upsert_thesis(payload: ThesisUpsert, db: Session = Depends(get_db)):
     )) or 0) + 1
     db.add(ThesisVersion(**payload.model_dump(), version=next_version))
     db.commit()
+    _patch_workbench_thesis(db, payload.instrument_id, thesis)
     return {"id": thesis.id, "version": next_version}
 
 
@@ -679,10 +704,7 @@ def list_decisions(db: Session = Depends(get_db)):
 
 @app.get("/portfolio")
 def get_portfolio(db: Session = Depends(get_db)):
-    try:
-        return portfolio_snapshot(db)
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
+    return _snapshot_or_409(db)
 
 
 def _get_or_create_account(db: Session, name: str, broker: str) -> Account:
@@ -727,6 +749,12 @@ def _read_csv(upload: UploadFile) -> list[dict[str, str]]:
 @app.post("/imports/opening")
 def import_opening(file: UploadFile = File(...), db: Session = Depends(get_db)):
     rows = _read_csv(file)
+    for row in rows:
+        if Decimal(row["quantity"]) <= 0:
+            raise HTTPException(
+                400, f"Row for {row.get('symbol', '?')} has quantity <= 0; opening balances "
+                     "must be positive."
+            )
     count = 0
     for row in rows:
         account = _get_or_create_account(
@@ -752,7 +780,13 @@ def import_opening(file: UploadFile = File(...), db: Session = Depends(get_db)):
         )
         db.add(tx)
         count += 1
-    db.commit()
+    try:
+        db.flush()
+        _snapshot_or_409(db)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     return {"imported": count}
 
 
@@ -844,7 +878,7 @@ def followed_investor_profiles(db: Session = Depends(get_db)):
 @app.get("/investor-signals")
 def investor_signals(db: Session = Depends(get_db)):
     result = build_investor_signals(db)
-    owned_ids = {position["instrument_id"] for position in portfolio_snapshot(db)["positions"]}
+    owned_ids = {position["instrument_id"] for position in _snapshot_or_409(db)["positions"]}
     prospective_ids = set(db.scalars(select(WatchlistItem.instrument_id).where(
         WatchlistItem.status == "ACTIVE"
     )).all())
@@ -953,7 +987,7 @@ def mark_notification_read(notification_id: int, db: Session = Depends(get_db)):
 
 def _build_stock_workbench(db: Session):
     """Return fixed, stock-level rows for every dashboard evidence tab."""
-    snapshot = portfolio_snapshot(db)
+    snapshot = _snapshot_or_409(db)
     severity = {
         "STRONG_SELL": 6, "SELL": 5, "TRIM": 4, "REVIEW": 3,
         "HOLD": 2, "BUY_MORE": 1,
@@ -1078,6 +1112,7 @@ def _build_stock_workbench(db: Session):
         rows.sort(key=lambda item: (item["company_name"], item["symbol"]))
     return {
         "as_of": snapshot["as_of"],
+        "summary": snapshot["summary"],
         "style_definitions": [{"id": item["id"], "name": item["name"],
                                "version": item["version"]} for item in style_definitions],
         "investor_profiles": [{"id": item["id"], "name": item["name"]}
@@ -1103,6 +1138,27 @@ def _store_workbench_snapshot(db: Session, payload: dict) -> AnalysisSnapshot:
     db.commit()
     db.refresh(snapshot)
     return snapshot
+
+
+def _patch_workbench_thesis(db: Session, instrument_id: int, thesis: Thesis | None) -> None:
+    """Update the cached workbench snapshot's thesis fields for one instrument in place,
+    so a saved thesis edit shows up on the dashboard immediately instead of waiting for the
+    next scheduled/forced snapshot rebuild."""
+    snapshot = db.scalar(select(AnalysisSnapshot).where(
+        AnalysisSnapshot.snapshot_key == "stock_workbench"
+    ))
+    if not snapshot or not snapshot.payload:
+        return
+    changed = False
+    for scope_rows in (snapshot.payload.get("owned", []), snapshot.payload.get("prospective", [])):
+        for row in scope_rows:
+            if row.get("instrument_id") == instrument_id:
+                row["portfolio"]["thesis_status"] = thesis.status.value if thesis else None
+                row["portfolio"]["thesis_reason"] = thesis.reason if thesis else None
+                changed = True
+    if changed:
+        flag_modified(snapshot, "payload")
+        db.commit()
 
 
 def _record_workbench_failure(db: Session, error: str) -> None:
@@ -1154,7 +1210,7 @@ def _refresh_universe_if_due(db: Session, force: bool = False) -> dict:
 
 
 def _priority_financial_instruments(db: Session) -> list[Instrument]:
-    owned_ids = {position["instrument_id"] for position in portfolio_snapshot(db)["positions"]}
+    owned_ids = {position["instrument_id"] for position in _snapshot_or_409(db)["positions"]}
     prospective_ids = set(db.scalars(select(WatchlistItem.instrument_id).where(
         WatchlistItem.status == "ACTIVE"
     )).all())
@@ -1682,7 +1738,7 @@ def _upstox_instruments(db: Session) -> tuple[list[ProviderInstrument], list[str
     candidate_ids = set(db.scalars(select(UniverseMembership.instrument_id).where(
         UniverseMembership.active.is_(True)
     )).all())
-    owned_ids = {position["instrument_id"] for position in portfolio_snapshot(db)["positions"]}
+    owned_ids = {position["instrument_id"] for position in _snapshot_or_409(db)["positions"]}
     prospective_ids = set(db.scalars(select(WatchlistItem.instrument_id).where(
         WatchlistItem.status == "ACTIVE"
     )).all())
@@ -1825,7 +1881,7 @@ def investor_style_matrix(
     db: Session = Depends(get_db),
 ):
     styles = load_styles()
-    owned_ids = {position["instrument_id"] for position in portfolio_snapshot(db)["positions"]}
+    owned_ids = {position["instrument_id"] for position in _snapshot_or_409(db)["positions"]}
     prospective_ids = set(db.scalars(select(WatchlistItem.instrument_id).where(
         WatchlistItem.status == "ACTIVE"
     )).all())
@@ -2265,7 +2321,7 @@ def review_document_analysis(analysis_id: int, payload: DocumentReviewDecision,
 @app.post("/reconcile")
 def reconcile(file: UploadFile = File(...), db: Session = Depends(get_db)):
     broker_rows = _read_csv(file)
-    snapshot = portfolio_snapshot(db)
+    snapshot = _snapshot_or_409(db)
     calculated = {
         (p["account_name"], p["exchange"], p["symbol"]): Decimal(str(p["quantity"]))
         for p in snapshot["positions"]

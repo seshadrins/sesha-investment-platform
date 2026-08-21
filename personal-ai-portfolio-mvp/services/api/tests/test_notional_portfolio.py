@@ -58,10 +58,19 @@ def test_fifo_sale_and_oversell_reservation():
 
 
 def test_target_date_prevents_same_day_preclose_lookahead():
-    before_close_utc = datetime(2026, 8, 17, 8, 0)  # 13:30 IST
-    after_close_utc = datetime(2026, 8, 17, 11, 0)  # 16:30 IST
-    assert target_price_date(before_close_utc) == date(2026, 8, 18)
-    assert target_price_date(after_close_utc) == date(2026, 8, 17)
+    before_close_utc = datetime(2026, 8, 17, 8, 0)  # 13:30 IST, today's close not yet public
+    after_close_utc = datetime(2026, 8, 17, 11, 0)  # 16:30 IST, today's close already public
+    # Not yet public: fair to settle against today's close once it's later observed.
+    assert target_price_date(before_close_utc) == date(2026, 8, 17)
+    # Already public: must not settle at a close the decision-maker could already see.
+    assert target_price_date(after_close_utc) == date(2026, 8, 18)
+
+
+def test_target_date_at_exact_16_00_ist_boundary_is_treated_as_public():
+    at_boundary_utc = datetime(2026, 8, 17, 10, 30)  # exactly 16:00 IST
+    just_before_utc = datetime(2026, 8, 17, 10, 29, 59)  # 15:59:59 IST
+    assert target_price_date(at_boundary_utc) == date(2026, 8, 18)
+    assert target_price_date(just_before_utc) == date(2026, 8, 17)
 
 
 def test_recommendation_learning_keeps_future_horizons_pending_and_measures_available_ones():
