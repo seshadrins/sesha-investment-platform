@@ -154,4 +154,18 @@ with st.expander("Automation run history", expanded=True):
     else:
         st.info("No tracked scheduled or forced runs have been recorded yet.")
 
+with st.expander("Portfolio risk settings", expanded=True):
+    st.caption(
+        "Portfolio-wide risk parameters applied identically to every stock, independent of "
+        "any individual thesis. Read-only for now; editing these is a follow-up."
+    )
+    portfolio_settings = api_get("/settings")["portfolio_risk_settings"]
+    percent_fields = {"max_position_weight", "trim_position_weight", "loss_review_threshold", "profit_review_threshold"}
+    settings_rows = [{
+        "Setting": item["name"],
+        "Value": f"{item['value']:.0%}" if item["name"] in percent_fields else f"{item['value']}/100",
+        "What it gates": item["description"],
+    } for item in portfolio_settings]
+    st.dataframe(pd.DataFrame(settings_rows), width="stretch", hide_index=True)
+
 st.page_link("app.py", label="← Back to dashboard")

@@ -15,8 +15,15 @@ if not instruments:
     st.info("Add an instrument under Transactions first.")
     st.stop()
 
+# Consumed once: a deep link from the dashboard's Portfolio & Thesis tab pre-selects the stock.
+deep_link_symbol = st.session_state.pop("deep_link_symbol", None)
 instrument_by_label = {instrument_label(i): i for i in instruments}
-selected = instrument_by_label[st.selectbox("Instrument", instrument_by_label)]
+labels = list(instrument_by_label)
+default_index = next(
+    (index for index, label in enumerate(labels) if deep_link_symbol and label.startswith(deep_link_symbol)),
+    0,
+)
+selected = instrument_by_label[st.selectbox("Instrument", labels, index=default_index)]
 position = next((p for p in snapshot["positions"] if p["instrument_id"] == selected["id"]), None)
 research = api_get(f"/research/{selected['id']}")
 
@@ -32,6 +39,11 @@ with summary_tab:
         cols[2].metric("Portfolio weight", f"{position['weight']:.1%}")
         return_text = "No price" if position["return_pct"] is None else f"{position['return_pct']:.2%}"
         cols[3].metric("Unrealised return", return_text)
+        st.caption(
+            "Concentration and loss/profit-threshold reasons below come from portfolio-wide "
+            "risk settings (System Status → Portfolio risk settings), not the thesis you're "
+            "editing on this page."
+        )
         st.markdown("**Why this prompt was generated**")
         for reason in position["recommendation_reasons"]:
             st.write(f"• {reason}")

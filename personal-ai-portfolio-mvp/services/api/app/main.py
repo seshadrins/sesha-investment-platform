@@ -192,6 +192,35 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+# Read-only visibility into the portfolio-wide risk settings that drive recommend()'s
+# concentration/loss-review gates (see Changes-SetA Phase 3). These are plain env-var
+# settings today, not a DB-backed table, so this just exposes the running values and a
+# plain-language description of what each one gates.
+PORTFOLIO_RISK_SETTINGS = [
+    ("max_position_weight", "max_position_weight",
+     "A stock above this share of the portfolio is a candidate for TRIM/HOLD instead of BUY_MORE."),
+    ("trim_position_weight", "trim_position_weight",
+     "A stock above this share of the portfolio triggers a TRIM recommendation."),
+    ("loss_review_threshold", "loss_review_threshold",
+     "An unrealised return at or below this level triggers a REVIEW/SELL recommendation."),
+    ("profit_review_threshold", "profit_review_threshold",
+     "Combined with the maximum position weight, an unrealised return at or above this level "
+     "can trigger a TRIM recommendation to realise gains."),
+    ("buy_more_min_financial_score", "buy_more_min_financial_score",
+     "The financial-quality score (0-100) a stock must meet or exceed to qualify for BUY_MORE."),
+]
+
+
+@app.get("/settings")
+def get_settings() -> dict:
+    return {
+        "portfolio_risk_settings": [
+            {"name": name, "value": getattr(settings, attr), "description": description}
+            for name, attr, description in PORTFOLIO_RISK_SETTINGS
+        ]
+    }
+
+
 @app.post("/accounts", response_model=AccountOut)
 def create_account(payload: AccountCreate, db: Session = Depends(get_db)):
     existing = db.scalar(select(Account).where(Account.name == payload.name))

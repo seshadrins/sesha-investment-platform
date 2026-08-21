@@ -50,8 +50,9 @@ def recommend(
         )
         if weight >= settings.trim_position_weight:
             reasons.append(
-                f"Position weight {weight:.1%} also exceeds the trim threshold "
-                f"of {settings.trim_position_weight:.1%}."
+                f"Position weight {weight:.1%} also exceeds the portfolio's "
+                f"{settings.trim_position_weight:.0%} trim threshold "
+                "(see System Status → Portfolio risk settings)."
             )
         if thesis_status == ThesisStatus.WATCH:
             reasons.append("The thesis is already on watch.")
@@ -60,8 +61,9 @@ def recommend(
 
     if weight >= settings.trim_position_weight:
         reasons.append(
-            f"Position weight {weight:.1%} exceeds the trim threshold "
-            f"of {settings.trim_position_weight:.1%}."
+            f"Position weight {weight:.1%} exceeds the portfolio's "
+            f"{settings.trim_position_weight:.0%} trim threshold "
+            "(see System Status → Portfolio risk settings)."
         )
         return "TRIM", reasons
 
@@ -71,8 +73,10 @@ def recommend(
         and weight >= settings.max_position_weight
     ):
         return "TRIM", [
-            f"Return is {return_pct:.1%} and position weight is {weight:.1%}; "
-            "consider partial profit realisation and rebalancing."
+            f"Return is {return_pct:.1%} and position weight is {weight:.1%}, above the "
+            f"portfolio's {settings.max_position_weight:.0%} maximum position weight "
+            "(see System Status → Portfolio risk settings); consider partial profit "
+            "realisation and rebalancing."
         ]
 
     # An elapsed holding horizon surfaces REVIEW independent of price/weight conditions — a
@@ -95,13 +99,19 @@ def recommend(
             and financial_score >= settings.buy_more_min_financial_score
             and not valuation_stretched
         ):
-            reasons.append("Position is well below the configured maximum allocation.")
+            reasons.append(
+                f"Position is well below the portfolio's {settings.max_position_weight:.0%} "
+                "maximum position weight (see System Status → Portfolio risk settings)."
+            )
             reasons.append(f"Financial-quality score is {financial_score}/100, "
                             f"at or above the {settings.buy_more_min_financial_score} evidence floor.")
             reasons.append("Valuation is not broadly stretched versus sector comparisons.")
             return "BUY_MORE", reasons
-        reasons.append("Position is well below the configured maximum allocation, "
-                        "but financial-quality/valuation evidence does not clear the bar to add.")
+        reasons.append(
+            f"Position is well below the portfolio's {settings.max_position_weight:.0%} "
+            "maximum position weight (see System Status → Portfolio risk settings), "
+            "but financial-quality/valuation evidence does not clear the bar to add."
+        )
         if financial_score is None:
             reasons.append("Financial evidence is missing or incomplete for this stock.")
         elif financial_score < settings.buy_more_min_financial_score:

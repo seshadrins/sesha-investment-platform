@@ -130,10 +130,8 @@ def render_scope(rows, scope, account_positions=None):
                           if portfolio_field(row, "return_pct") is not None else None,
                 "Weight": (portfolio_field(row, "weight") or 0) * 100
                           if portfolio_field(row, "weight") is not None else None,
-                "Thesis": row["portfolio"]["thesis_status"] or "Not recorded",
-                "Thesis summary": row["portfolio"]["thesis_reason"] or "Not recorded",
             } for row in rows])
-            render_table(frame, {
+            column_config = {
                 "Quantity": st.column_config.NumberColumn(format="%.4f"),
                 "Average cost": st.column_config.NumberColumn(format="₹%.2f"),
                 "Current price": st.column_config.NumberColumn(format="₹%.2f"),
@@ -141,12 +139,7 @@ def render_scope(rows, scope, account_positions=None):
                 "Unrealised P&L": st.column_config.NumberColumn(format="₹%.2f"),
                 "Return": st.column_config.NumberColumn(format="%.2f%%"),
                 "Weight": st.column_config.NumberColumn(format="%.2f%%"),
-                # Explicit widths for the free-text columns so the grid produces real
-                # horizontal scroll instead of silently shrinking every column to fit —
-                # without these, "Thesis summary" was pushed off-screen with no scrollbar.
-                "Thesis": st.column_config.TextColumn(width="small"),
-                "Thesis summary": st.column_config.TextColumn(width="large"),
-            })
+            }
         else:
             frame = pd.DataFrame([{
                 "Stock": stock_name(row),
@@ -155,14 +148,27 @@ def render_scope(rows, scope, account_positions=None):
                 "Shortlisted on": row["portfolio"]["shortlisted_on"],
                 "Latest price": row["portfolio"]["current_price"],
                 "Price date": row["portfolio"]["price_date"],
-                "Thesis": row["portfolio"]["thesis_status"] or "Not recorded",
-                "Thesis summary": row["portfolio"]["thesis_reason"] or "Not recorded",
             } for row in rows])
-            render_table(frame, {
-                "Latest price": st.column_config.NumberColumn(format="₹%.2f"),
-                "Thesis": st.column_config.TextColumn(width="small"),
-                "Thesis summary": st.column_config.TextColumn(width="large"),
-            })
+            column_config = {"Latest price": st.column_config.NumberColumn(format="₹%.2f")}
+
+        if frame.empty:
+            st.info("No rows are available for this view.")
+        else:
+            event = st.dataframe(
+                frame, width="stretch", height=TABLE_HEIGHT, hide_index=True,
+                column_config=column_config, on_select="rerun",
+                selection_mode="single-row", key=f"portfolio_select_{scope}",
+            )
+            st.caption(
+                f"Showing {len(frame)} stocks. Scroll inside the table to see additional rows. "
+                "Select a row, then open its thesis to see or update the reasoning behind it."
+            )
+            selected_indices = event.selection.rows if event and event.selection else []
+            if selected_indices:
+                selected_row = rows[selected_indices[0]]
+                if st.button("Review thesis →", key=f"jump_thesis_{scope}"):
+                    st.session_state["deep_link_symbol"] = stock_name(selected_row)
+                    st.switch_page("pages/3_Thesis_and_Review.py")
 
     with data_tab:
         frame = pd.DataFrame([{
