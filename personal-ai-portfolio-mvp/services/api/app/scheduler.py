@@ -16,7 +16,11 @@ from .automation_runs import (
 )
 from .config import settings
 from .database import Base, SessionLocal, apply_additive_migrations, engine
-from .main import _record_workbench_failure, _run_analysis_pipeline, _run_morning_automation
+from .automation_pipeline import (
+    _record_workbench_failure,
+    _run_analysis_pipeline,
+    _run_morning_automation,
+)
 from .models import AutomationRun
 from .automation_config import effective_schedule
 from .schedule_health import retry_delays

@@ -65,9 +65,12 @@ def portfolio_snapshot(db: Session) -> dict:
             if result.first_purchase_date
             else 0
         )
+        # Division stays in Decimal (ledger precision) all the way through; float() is only
+        # applied once, at the very end, right before the value leaves Python for JSON/the
+        # recommend() threshold comparisons — not chained through an earlier float roundtrip.
         unrealised = market_value - result.remaining_cost if market_value is not None else None
-        return_pct = (
-            float(unrealised / result.remaining_cost)
+        return_pct_decimal = (
+            unrealised / result.remaining_cost
             if unrealised is not None and result.remaining_cost
             else None
         )
@@ -84,9 +87,10 @@ def portfolio_snapshot(db: Session) -> dict:
                 "remaining_cost": float(result.remaining_cost),
                 "current_price": float(current_price) if current_price else None,
                 "price_date": price_obj.price_date.isoformat() if price_obj else None,
+                "market_value_decimal": market_value,
                 "market_value": float(market_value) if market_value is not None else None,
                 "unrealised_profit": float(unrealised) if unrealised is not None else None,
-                "return_pct": return_pct,
+                "return_pct": float(return_pct_decimal) if return_pct_decimal is not None else None,
                 "realised_profit": float(result.realised_profit),
                 "dividend_income": float(result.dividend_income),
                 "first_purchase_date": (
@@ -105,9 +109,10 @@ def portfolio_snapshot(db: Session) -> dict:
 
     analysis_cache: dict[int, dict] = {}
     for item in provisional:
+        market_value_decimal = item.pop("market_value_decimal")
         weight = (
-            item["market_value"] / float(total_market_value)
-            if item["market_value"] is not None and total_market_value
+            float(market_value_decimal / total_market_value)
+            if market_value_decimal is not None and total_market_value
             else 0.0
         )
         thesis = theses.get(item["instrument_id"])

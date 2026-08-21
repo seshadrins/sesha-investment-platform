@@ -53,6 +53,53 @@ def apply_additive_migrations() -> None:
                 "ALTER TABLE notional_portfolios ADD COLUMN IF NOT EXISTS "
                 "reinvest_dividends BOOLEAN NOT NULL DEFAULT FALSE"
             ))
+        if "transactions" in tables:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_transactions_account_id "
+                "ON transactions (account_id)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_transactions_instrument_id "
+                "ON transactions (instrument_id)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_transactions_trade_date "
+                "ON transactions (trade_date)"
+            ))
+            _add_check_constraint_if_missing(
+                connection, "transactions", "ck_transaction_quantity_positive",
+                "CHECK (quantity > 0)",
+            )
+            _add_check_constraint_if_missing(
+                connection, "transactions", "ck_transaction_price_non_negative",
+                "CHECK (price >= 0)",
+            )
+            _add_check_constraint_if_missing(
+                connection, "transactions", "ck_transaction_charges_non_negative",
+                "CHECK (charges >= 0)",
+            )
+        if "screening_results" in tables:
+            _add_check_constraint_if_missing(
+                connection, "screening_results", "ck_screening_result_recommendation_vocabulary",
+                "CHECK (recommendation IN ('STRONG_BUY','BUY','WATCH','AVOID','REVIEW'))",
+            )
+
+
+def _add_check_constraint_if_missing(
+    connection, table_name: str, constraint_name: str, constraint_sql: str
+) -> None:
+    """Postgres has no `ADD CONSTRAINT IF NOT EXISTS`, so guard with an explicit lookup.
+    A pre-existing row that violates the new constraint would make this ALTER fail loudly
+    at startup rather than silently skip — that's intentional: it surfaces bad data instead
+    of pretending the constraint is enforced when it isn't."""
+    exists = connection.execute(text(
+        "SELECT 1 FROM information_schema.table_constraints "
+        "WHERE table_name = :table_name AND constraint_name = :constraint_name"
+    ), {"table_name": table_name, "constraint_name": constraint_name}).first()
+    if not exists:
+        connection.execute(text(
+            f"ALTER TABLE {table_name} ADD CONSTRAINT {constraint_name} {constraint_sql}"
+        ))
 
 
 def get_db():

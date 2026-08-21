@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
-from sqlalchemy import LargeBinary, Date, DateTime, Enum as SAEnum, ForeignKey, JSON, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, LargeBinary, Date, DateTime, Enum as SAEnum, ForeignKey, JSON, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -88,6 +88,12 @@ class ScreeningResult(Base):
     __table_args__ = (
         UniqueConstraint(
             "universe_id", "instrument_id", "screened_on", name="uq_screening_result_day"
+        ),
+        # Matches recommend_prospective()'s fixed outcome vocabulary exactly, so a bug or a
+        # write that bypasses that function can't silently store a free-text value here.
+        CheckConstraint(
+            "recommendation IN ('STRONG_BUY','BUY','WATCH','AVOID','REVIEW')",
+            name="ck_screening_result_recommendation_vocabulary",
         ),
     )
 
@@ -259,12 +265,24 @@ class AutomationScheduleConfig(Base):
 
 class Transaction(Base):
     __tablename__ = "transactions"
+    __table_args__ = (
+        # A zero-quantity row is a no-op that calculate_position() silently skips and
+        # stores forever with no warning; a negative row is never legitimate. Price and
+        # charges stay >=0 (not >0) since a bonus allotment or split adjustment can
+        # legitimately have zero cash value.
+        CheckConstraint("quantity > 0", name="ck_transaction_quantity_positive"),
+        CheckConstraint("price >= 0", name="ck_transaction_price_non_negative"),
+        CheckConstraint("charges >= 0", name="ck_transaction_charges_non_negative"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
-    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id"))
+    # RESTRICT (not CASCADE): no endpoint deletes an Account or Instrument today, but if
+    # one is ever added, silently cascading away ledger history would be far worse than
+    # a blocked delete.
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"), index=True)
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id", ondelete="RESTRICT"), index=True)
     transaction_type: Mapped[TransactionType] = mapped_column(SAEnum(TransactionType))
-    trade_date: Mapped[date] = mapped_column(Date)
+    trade_date: Mapped[date] = mapped_column(Date, index=True)
     quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=0)
     price: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=0)
     charges: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=0)
