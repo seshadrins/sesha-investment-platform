@@ -12,6 +12,24 @@ def _normalise(value: str) -> str:
     return value.lower().replace("_", " ").replace("-", " ").strip()
 
 
+# Whether a higher or lower company-vs-sector value is favourable, per Upstox KEY_RATIOS
+# metric name. Deliberately excludes valuation multiples (P/E, P/B, EV/EBITDA) — "lower is
+# better" isn't true independent of growth/quality for those, so the UI leaves them
+# uncolored rather than guessing. Metric names not listed here (including any not seen in
+# practice yet) are left uncolored the same way.
+RATIO_DIRECTION = {
+    "ROE": "HIGHER",
+    "ROCE": "HIGHER",
+    "ROA": "HIGHER",
+    "QUICK RATIO": "HIGHER",
+    "NIM": "HIGHER",
+    "CASA": "HIGHER",
+    "NET NPA": "LOWER",
+    "DEBT/EQUITY": "LOWER",
+    "DEBT TO EQUITY": "LOWER",
+}
+
+
 def is_financial_sector(sector: str | None) -> bool:
     """Single shared definition of "financial sector" for both scoring exemptions
     (here) and style applicability (style_engine.py) — was previously duplicated and
@@ -79,7 +97,8 @@ def build_financial_analysis(db: Session, instrument: Instrument) -> dict:
     q_net = _find_category(quarterly, "net", "profit")
 
     ratios = {str(item.get("name", "")).upper(): {
-        "company": _number(item.get("company_value")), "sector": _number(item.get("sector_value"))
+        "company": _number(item.get("company_value")), "sector": _number(item.get("sector_value")),
+        "direction": RATIO_DIRECTION.get(str(item.get("name", "")).upper()),
     } for item in evidence["KEY_RATIOS"].payload}
 
     balance_payload = evidence["BALANCE_SHEET"].payload

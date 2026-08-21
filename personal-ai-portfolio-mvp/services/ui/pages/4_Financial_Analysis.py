@@ -5,6 +5,44 @@ import streamlit as st
 
 from common import api_get, api_post, instrument_label, render_sidebar
 
+GREEN, AMBER, RED = "#22c55e", "#f59e0b", "#ef4444"
+
+
+def score_color(value):
+    """Green >=70/amber 50-69/red <50 — the same 70-point floor recommend() already uses
+    for the BUY_MORE gate, so the coloring matches what actually drives a recommendation."""
+    if value >= 70:
+        return GREEN
+    if value >= 50:
+        return AMBER
+    return RED
+
+
+def render_score_metric(col, label, value):
+    if value is None:
+        col.metric(label, "N/A")
+        return
+    col.markdown(
+        f"<div style='font-size:0.875rem;opacity:0.6'>{label}</div>"
+        f"<div style='font-size:1.9rem;font-weight:600;line-height:1.3;color:{score_color(value)}'>{value}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def style_ratio_rows(ratio_df, directions):
+    def highlight(row):
+        direction = directions[row.name]
+        company, sector = row["Company"], row["Sector"]
+        styles = [""] * len(row)
+        if direction and company is not None and sector is not None:
+            better = company >= sector if direction == "HIGHER" else company <= sector
+            color = f"background-color: {GREEN}40" if better else f"background-color: {RED}40"
+            for col_name in ("Company", "Sector"):
+                styles[row.index.get_loc(col_name)] = color
+        return styles
+    return ratio_df.style.apply(highlight, axis=1)
+
+
 render_sidebar()
 st.title("Financial Analysis")
 st.caption("Evidence-based company quality, trends, valuation context, and governance review.")
@@ -119,14 +157,23 @@ score_tab, trends_tab, valuation_tab, governance_tab, evidence_tab = st.tabs(
 
 with score_tab:
     score_cols = st.columns(5)
-    score_cols[0].metric("Overall", analysis["overall_score"] if analysis["overall_score"] is not None else "N/A")
+    render_score_metric(score_cols[0], "Overall", analysis["overall_score"])
     for col, (name, value) in zip(score_cols[1:], analysis["scores"].items()):
-        col.metric(name.replace("_", " ").title(), value if value is not None else "N/A")
-    st.caption("Scores range from 0–100. N/A means unavailable or inappropriate for the sector.")
+        render_score_metric(col, name.replace("_", " ").title(), value)
+    st.caption(
+        "Scores range from 0–100 (green ≥70, amber 50–69, red <50 — the same 70-point floor "
+        "BUY_MORE recommendations require). N/A means unavailable or inappropriate for the sector."
+    )
     rows = [{"Metric": name, "Company": values["company"], "Sector": values["sector"]}
             for name, values in analysis["ratios"].items()]
+    directions = [values.get("direction") for values in analysis["ratios"].values()]
     st.subheader("Company versus sector")
-    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    if rows:
+        st.dataframe(style_ratio_rows(pd.DataFrame(rows), directions), width="stretch", hide_index=True)
+        st.caption("Green/red shading applies only where higher-or-lower-is-better is unambiguous "
+                   "(e.g. ROE, ROCE, NPA); valuation multiples like P/E and P/B are left uncolored.")
+    else:
+        st.info("No sector-relative ratio data is available for this company.")
     metrics = analysis["metrics"]
     st.subheader("Calculated operating metrics")
     st.dataframe(pd.DataFrame([{"Operating margin %": metrics["operating_margin_pct"],
