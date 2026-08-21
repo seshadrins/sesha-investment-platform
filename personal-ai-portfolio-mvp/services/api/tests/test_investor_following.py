@@ -155,6 +155,72 @@ def test_llm_sourced_observation_always_requires_review_even_with_exact_alias(mo
     assert db.scalar(select(InvestorDisclosure)) is None
 
 
+def test_near_miss_below_floor_is_recorded_but_not_an_unread_alert(monkeypatch):
+    import app.disclosure_pipeline as dp
+
+    db = db_session()
+    instrument = Instrument(
+        exchange="NSE", symbol="NEARM1", company_name="Near Miss One Ltd", isin="INE000A00099"
+    )
+    db.add(instrument)
+    db.flush()
+    document = DisclosureDocument(
+        mapping_id=1, instrument_id=instrument.id, exchange="NSE",
+        report_date=date(2026, 3, 31), source_url="https://www.nseindia.com/near-miss-low.xml",
+        content=b"filing text",
+    )
+    db.add(document)
+    db.commit()
+
+    monkeypatch.setattr(dp, "extract_xbrl_observations", lambda content: [
+        ExtractedObservation(shareholder_name="S Gopalakrishnan", ownership_pct=Decimal("0.1"))
+    ])
+    monkeypatch.setattr(
+        dp, "match_investor_alias", lambda name, aliases, threshold=None: (None, 0.32, False)
+    )
+
+    result = _process_document(db, document)
+
+    assert result["matched"] == 0
+    notification = db.scalar(select(AppNotification).where(AppNotification.category == "ALIAS_REVIEW"))
+    assert notification is not None
+    assert notification.read_at is not None
+
+
+def test_near_miss_within_reviewable_range_still_creates_unread_alert(monkeypatch):
+    import app.disclosure_pipeline as dp
+
+    db = db_session()
+    instrument = Instrument(
+        exchange="NSE", symbol="NEARM2", company_name="Near Miss Two Ltd", isin="INE000A00096"
+    )
+    db.add(instrument)
+    db.flush()
+    document = DisclosureDocument(
+        mapping_id=1, instrument_id=instrument.id, exchange="NSE",
+        report_date=date(2026, 3, 31), source_url="https://www.nseindia.com/near-miss-high.xml",
+        content=b"filing text",
+    )
+    db.add(document)
+    db.commit()
+
+    monkeypatch.setattr(dp, "extract_xbrl_observations", lambda content: [
+        ExtractedObservation(
+            shareholder_name="Radhakishan Shivkishan Damani HUF", ownership_pct=Decimal("0.5")
+        )
+    ])
+    monkeypatch.setattr(
+        dp, "match_investor_alias", lambda name, aliases, threshold=None: (None, 0.70, False)
+    )
+
+    result = _process_document(db, document)
+
+    assert result["matched"] == 0
+    notification = db.scalar(select(AppNotification).where(AppNotification.category == "ALIAS_REVIEW"))
+    assert notification is not None
+    assert notification.read_at is None
+
+
 def test_upsert_disclosure_recovers_from_concurrent_insert_race(tmp_path):
     db_path = tmp_path / "race.db"
     engine = create_engine(f"sqlite+pysqlite:///{db_path}")

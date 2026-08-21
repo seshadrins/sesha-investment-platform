@@ -639,11 +639,15 @@ def _process_document(db: Session, document: DisclosureDocument) -> dict:
                 # A real candidate existed but scored below the match threshold — leave a
                 # trail instead of silently dropping it, so a followed investor's disclosed
                 # name drifting just under threshold is discoverable without re-parsing the
-                # filing by hand.
+                # filing by hand. Below disclosure_near_miss_notify_floor, the trail is kept
+                # (still queryable via /notifications) but pre-marked read: every shareholding
+                # filing produces near-zero-confidence surname-pattern "matches" that are
+                # routine noise, and counting them as unread alerts drowns the ones a user
+                # could plausibly act on.
                 digest = hashlib.sha256(
                     f"{document.id}|{observation.shareholder_name}|{confidence}".encode()
                 ).hexdigest()[:20]
-                _notification(
+                near_miss = _notification(
                     db, f"alias-near-miss:{digest}", "ALIAS_REVIEW",
                     "Shareholder name fell below the alias-match threshold",
                     f"'{observation.shareholder_name}' scored {confidence:.2f} against a "
@@ -654,6 +658,8 @@ def _process_document(db: Session, document: DisclosureDocument) -> dict:
                      "confidence": confidence, "source_url": document.source_url},
                     "INFO",
                 )
+                if near_miss and confidence < settings.disclosure_near_miss_notify_floor:
+                    near_miss.read_at = datetime.utcnow()
             continue
         if ambiguous or is_llm_sourced:
             reviews += int(_create_review(

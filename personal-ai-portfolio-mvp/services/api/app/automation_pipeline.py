@@ -764,7 +764,12 @@ def _check_investor_disclosures(db: Session) -> dict:
         pending_aliases=pending_aliases, ingestion_enabled=settings.disclosure_auto_ingest_enabled,
         missing_investors=len(missing))
     if coverage_status == "ACTION_REQUIRED":
-        message = "Coverage has source, parser, alias-review, or configuration blockers requiring intervention."
+        message = "Coverage has source, parser, or configuration blockers requiring intervention."
+    elif coverage_status == "REVIEW_PENDING":
+        message = (
+            f"{pending_aliases} shareholder-name match(es) awaiting your review. This is "
+            "routine, expected, self-clearing work — not a failure."
+        )
     elif coverage_status == "IN_PROGRESS":
         message = f"Coverage is progressing normally; {remaining_mappings} active source mappings remain unchecked."
     elif coverage_status == "NO_ATTRIBUTABLE_DISCLOSURE":

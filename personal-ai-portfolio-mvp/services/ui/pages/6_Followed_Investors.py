@@ -50,12 +50,23 @@ if reviews:
 if coverage and coverage.get("coverage_status"):
     progress = coverage.get("coverage_progress", {})
     status = coverage["coverage_status"]
-    detail = (f"{progress.get('checked_mappings', 0)} of {progress.get('active_mappings', 0)} "
-              "active source mappings checked for this reporting period.")
+    checked, active = progress.get("checked_mappings", 0), progress.get("active_mappings", 0)
+    detail = f"{checked} of {active} active source mappings checked for this reporting period."
     if status == "ACTION_REQUIRED": st.error(f"Disclosure coverage: {status}. {coverage['message']} {detail}")
+    # Pending alias reviews are routine, self-clearing work, not a failure — calmer framing
+    # and a non-red info box instead of being badged the same as a real pipeline failure.
+    elif status == "REVIEW_PENDING": st.info(f"Disclosure coverage: {coverage['message']} {detail}")
     elif status == "IN_PROGRESS": st.info(f"Disclosure coverage: {status}. {coverage['message']} {detail}")
     elif status == "NO_ATTRIBUTABLE_DISCLOSURE": st.warning(f"Disclosure coverage: {status}. {coverage['message']}")
     else: st.success(f"Disclosure coverage: {status}. {coverage['message']}")
+    batch_size = pipeline["batch_size"]
+    if active and batch_size:
+        runs_to_complete = -(-active // batch_size)  # ceiling division
+        st.caption(
+            f"{checked}/{active} mappings checked this cycle · ~{runs_to_complete} scheduled "
+            f"runs to complete a full pass at {batch_size}/run — by design, to avoid "
+            "hammering NSE/BSE with requests."
+        )
 
 tabs = st.tabs([
     "Stock × investor matrix", "Activity feed", "Automated ingestion", "Alias review",

@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     disclosure_request_interval_seconds: float = 1.0
     disclosure_cache_hours: int = 24
     disclosure_fuzzy_match_threshold: float = 0.84
+    # Below this, a near-miss alias match is still recorded (queryable trail) but does not
+    # raise an unread notification — every shareholding filing produces surname-pattern
+    # near-zero-confidence "matches" that are routine noise, not a reviewable signal.
+    disclosure_near_miss_notify_floor: float = 0.60
     disclosure_llm_provider: str = "auto"
     disclosure_llm_max_chars: int = 120000
     nse_disclosure_api_url: str = "https://www.nseindia.com/api/corporate-share-holdings-master"

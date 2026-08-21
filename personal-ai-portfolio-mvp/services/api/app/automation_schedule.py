@@ -89,8 +89,14 @@ def latest_date_in_payload(payload: Any) -> date | None:
 def disclosure_coverage_state(*, remaining_mappings: int, failed_mappings: int,
                               parser_failures: int, pending_aliases: int,
                               ingestion_enabled: bool, missing_investors: int) -> str:
-    if (not ingestion_enabled or failed_mappings or parser_failures or pending_aliases):
+    # ACTION_REQUIRED is reserved for genuine failures — a disabled pipeline, a source that
+    # errored, or a parser crash. Pending alias reviews are routine, self-clearing work (an
+    # ambiguous shareholder name sitting in the review queue exactly as designed) and get
+    # their own calmer REVIEW_PENDING state instead of being badged like a real failure.
+    if not ingestion_enabled or failed_mappings or parser_failures:
         return "ACTION_REQUIRED"
+    if pending_aliases:
+        return "REVIEW_PENDING"
     if remaining_mappings:
         return "IN_PROGRESS"
     if missing_investors:

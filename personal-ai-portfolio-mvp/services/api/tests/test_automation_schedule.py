@@ -44,3 +44,19 @@ def test_disclosure_coverage_states_distinguish_progress_absence_and_blockers():
     assert disclosure_coverage_state(remaining_mappings=0, **common) == "NO_ATTRIBUTABLE_DISCLOSURE"
     assert disclosure_coverage_state(remaining_mappings=508, **{**common, "failed_mappings": 1}) == "ACTION_REQUIRED"
     assert disclosure_coverage_state(remaining_mappings=0, **{**common, "missing_investors": 0}) == "CURRENT"
+
+
+def test_pending_aliases_alone_is_review_pending_not_action_required():
+    # Genuinely ambiguous shareholder-name matches sitting in the review queue are routine,
+    # self-clearing work — not a failure — so they must not be badged the same as a real
+    # parser crash or disabled ingestion pipeline.
+    common = dict(remaining_mappings=0, failed_mappings=0, parser_failures=0,
+                  ingestion_enabled=True, missing_investors=0)
+    assert disclosure_coverage_state(pending_aliases=2, **common) == "REVIEW_PENDING"
+    # A genuine failure alongside pending aliases still reports ACTION_REQUIRED.
+    assert disclosure_coverage_state(
+        pending_aliases=2, **{**common, "failed_mappings": 1}
+    ) == "ACTION_REQUIRED"
+    assert disclosure_coverage_state(
+        pending_aliases=2, **{**common, "ingestion_enabled": False}
+    ) == "ACTION_REQUIRED"
