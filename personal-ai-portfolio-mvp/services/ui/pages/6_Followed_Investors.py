@@ -76,11 +76,13 @@ tabs = st.tabs([
 with tabs[0]:
     st.write(
         "Stocks are rows and followed investors are columns. A blank cell means no attributable "
-        "disclosure has passed validation."
+        "disclosure has passed validation. Select a row to see the full disclosure behind each "
+        "populated cell."
     )
     matrix_rows = []
     for row in signals["rows"]:
         display = {
+            "instrument_id": row["instrument_id"],
             "View": row["universe"].title(),
             "Stock": f"{row['exchange']}:{row['symbol']}",
             "Company": row["company_name"],
@@ -103,12 +105,60 @@ with tabs[0]:
             "Portfolio view", ["Owned", "Prospective", "Research"],
             default=["Owned", "Prospective", "Research"],
         )
-        visible = matrix_df[matrix_df["View"].isin(view_filter)]
-        st.dataframe(visible, width="stretch", hide_index=True, height=500)
+        visible = matrix_df[matrix_df["View"].isin(view_filter)].reset_index(drop=True)
+        # instrument_id rides along in the frame (for mapping a selection back to
+        # signals["rows"]) but is never shown — column_order excludes it from display.
+        display_columns = [column for column in visible.columns if column != "instrument_id"]
+        event = st.dataframe(
+            visible, width="stretch", hide_index=True, height=500,
+            column_order=display_columns, on_select="rerun",
+            selection_mode="single-row", key="investor_matrix_select",
+        )
         st.download_button(
-            "Download investor matrix", visible.to_csv(index=False).encode("utf-8"),
+            "Download investor matrix", visible[display_columns].to_csv(index=False).encode("utf-8"),
             file_name="followed_investor_matrix.csv", mime="text/csv",
         )
+
+        selected_indices = event.selection.rows if event and event.selection else []
+        if selected_indices:
+            selected_instrument_id = visible.iloc[selected_indices[0]]["instrument_id"]
+            selected_row = next(
+                r for r in signals["rows"] if r["instrument_id"] == selected_instrument_id
+            )
+            cards = [
+                (profile, selected_row["investors"][profile["id"]])
+                for profile in signals["profiles"]
+                if selected_row["investors"][profile["id"]] is not None
+            ]
+            st.subheader(f"Disclosure detail — {selected_row['exchange']}:{selected_row['symbol']}")
+            if not cards:
+                st.info("No followed investor has a validated disclosure for this stock.")
+            for profile, cell in cards:
+                with st.container(border=True):
+                    st.markdown(f"**{profile['name']}**")
+                    if cell["change_percentage_points"] is not None and cell["previous_ownership_pct"] is not None:
+                        change_clause = (
+                            f"{cell['change_percentage_points']:+.2f} points versus the prior "
+                            f"filing ({cell['previous_ownership_pct']:.2f}%)"
+                        )
+                    else:
+                        change_clause = "no prior filing is stored for comparison"
+                    st.write(
+                        f"{profile['name']} disclosed {cell['ownership_pct']:.2f}% ownership as "
+                        f"of {cell['report_date']}, {change_clause} — classified as "
+                        f"{cell['signal'].replace('_', ' ')}. This is corroborating evidence "
+                        "only: it does not itself drive a BUY/SELL recommendation and can lag "
+                        "real trading activity by the exchange's filing lag."
+                    )
+                    detail_cols = st.columns([1, 1, 1, 1])
+                    detail_cols[0].caption(f"Filed on: {cell['filed_on'] or 'Unknown'}")
+                    detail_cols[1].caption("STALE" if cell["stale"] else "Current")
+                    if cell.get("source_url"):
+                        detail_cols[2].link_button("Open source filing", cell["source_url"])
+                    if cell.get("document_id"):
+                        detail_cols[3].link_button(
+                            "View stored copy", disclosure_document_url(cell["document_id"])
+                        )
 
 with tabs[1]:
     if not activity:
