@@ -50,6 +50,44 @@ def begin_run(
     return item, True
 
 
+def begin_scoped_run(
+    db: Session, scope: str, scheduled_for: datetime
+) -> tuple[AutomationRun, bool]:
+    """Start a run keyed to the current scheduled window for `scope` (e.g. "FORCED_DISCLOSURES"),
+    so a second concurrent trigger for the same intended activity collides with the
+    already-running one instead of racing it and doubling the underlying work. A prior
+    *completed* run for the same window does not block a fresh one — attempt increments so a
+    legitimate re-run (e.g. clicking "Run now" again later the same day) still proceeds."""
+    # Only terminal (non-RUNNING) prior runs advance the attempt counter. If the count
+    # included the currently-running row too, a second trigger arriving while the first is
+    # still in flight (the case this exists to catch) would get a fresh attempt/run_key
+    # instead of colliding with it.
+    attempt = 1 + (db.scalar(select(func.count()).select_from(AutomationRun).where(
+        AutomationRun.trigger == scope, AutomationRun.scheduled_for == scheduled_for,
+        AutomationRun.status != "RUNNING",
+    )) or 0)
+    run, created = begin_run(db, scheduled_for, scope, attempt)
+    if created:
+        return run, True
+    if run.status == "RUNNING":
+        return run, False
+    # Lost the attempt-number race against a run that already finished between the count
+    # above and the insert; retry once with a fresh attempt rather than surface a spurious
+    # "already in progress" error for a run that isn't actually running anymore.
+    return begin_scoped_run(db, scope, scheduled_for)
+
+
+def find_active_run(
+    db: Session, scheduled_for: datetime, triggers: tuple[str, ...]
+) -> AutomationRun | None:
+    """A RUNNING automation run for the given scheduled window and trigger family, if any."""
+    return db.scalar(select(AutomationRun).where(
+        AutomationRun.scheduled_for == scheduled_for,
+        AutomationRun.trigger.in_(triggers),
+        AutomationRun.status == "RUNNING",
+    ))
+
+
 def complete_run(
     db: Session, item: AutomationRun, status: str, actions: dict, error: str | None = None
 ) -> AutomationRun:
@@ -104,13 +142,13 @@ def mark_stalled_runs(db: Session, now: datetime | None = None) -> list[int]:
         AutomationRun.status == "RUNNING", AutomationRun.started_at < cutoff
     )).all()
     for item in rows:
-        item.status = "STALLED"
-        item.completed_at = now
-        item.error = (
-            f"Run exceeded the configured {settings.analysis_stall_minutes}-minute limit."
+        # Route through complete_run() rather than mutating status directly, so a
+        # stalled run produces the same AppNotification every other terminal status
+        # does instead of going silent until someone happens to check the health page.
+        complete_run(
+            db, item, "STALLED", item.action_status or {},
+            f"Run exceeded the configured {settings.analysis_stall_minutes}-minute limit.",
         )
-    if rows:
-        db.commit()
     return [item.id for item in rows]
 
 

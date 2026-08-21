@@ -16,6 +16,7 @@ import httpx
 from lxml import etree, html
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -353,9 +354,15 @@ def extract_xbrl_observations(content: bytes) -> list[ExtractedObservation]:
             if key in seen:
                 continue
             seen.add(key)
-            results.append(ExtractedObservation(
-                shareholder_name=name, ownership_pct=percentage, shares=shares
-            ))
+            try:
+                results.append(ExtractedObservation(
+                    shareholder_name=name, ownership_pct=percentage, shares=shares
+                ))
+            except ValidationError:
+                # One malformed row (e.g. a name under the 2-character minimum) shouldn't
+                # abort the whole document's batch — skip it and keep the rest, matching
+                # the LLM fallback path's own per-invocation ValidationError handling.
+                continue
         if results:
             return results
     return []
@@ -498,7 +505,7 @@ def match_investor_alias(
     if not ranked or ranked[0][0] < threshold:
         return None, ranked[0][0] if ranked else 0.0, False
     ambiguous = len(ranked) > 1 and ranked[1][1] != ranked[0][1] and ranked[1][0] >= ranked[0][0] - .03
-    return ranked[0][1], ranked[0][0], True or ambiguous
+    return ranked[0][1], ranked[0][0], ambiguous
 
 
 def _notification(
@@ -519,12 +526,35 @@ def _upsert_disclosure(
     db: Session, document: DisclosureDocument, observation: ExtractedObservation,
     investor_id: str, parser: str,
 ) -> str:
-    existing = db.scalar(select(InvestorDisclosure).where(
-        InvestorDisclosure.investor_id == investor_id,
-        InvestorDisclosure.instrument_id == document.instrument_id,
-        InvestorDisclosure.report_date == document.report_date,
-    ))
+    def _fetch() -> InvestorDisclosure | None:
+        return db.scalar(select(InvestorDisclosure).where(
+            InvestorDisclosure.investor_id == investor_id,
+            InvestorDisclosure.instrument_id == document.instrument_id,
+            InvestorDisclosure.report_date == document.report_date,
+        ))
+
+    existing = _fetch()
     old = None if not existing else (existing.ownership_pct, existing.shares, existing.source_url)
+    if not existing:
+        try:
+            with db.begin_nested():
+                db.add(InvestorDisclosure(
+                    investor_id=investor_id, instrument_id=document.instrument_id,
+                    report_date=document.report_date, filed_on=document.filed_on,
+                    ownership_pct=observation.ownership_pct, shares=observation.shares,
+                    source_url=document.source_url,
+                    source_type=f"{document.exchange}_{parser}"[:40],
+                ))
+                db.flush()
+            action = "NEW"
+        except IntegrityError:
+            # A concurrent pass (an overlapping scheduled/forced run) inserted the same
+            # (investor, instrument, period) row between our check above and this insert.
+            # Refetch and update it instead of letting the constraint violation propagate
+            # and roll back this mapping's whole batch, mirroring begin_run()'s own
+            # catch-and-refetch handling of the same kind of race.
+            existing = _fetch()
+            old = (existing.ownership_pct, existing.shares, existing.source_url)
     if existing:
         existing.filed_on = document.filed_on
         existing.ownership_pct = observation.ownership_pct
@@ -534,14 +564,6 @@ def _upsert_disclosure(
         action = "UPDATED" if old != (
             observation.ownership_pct, observation.shares, document.source_url
         ) else "UNCHANGED"
-    else:
-        db.add(InvestorDisclosure(
-            investor_id=investor_id, instrument_id=document.instrument_id,
-            report_date=document.report_date, filed_on=document.filed_on,
-            ownership_pct=observation.ownership_pct, shares=observation.shares,
-            source_url=document.source_url, source_type=f"{document.exchange}_{parser}"[:40],
-        ))
-        action = "NEW"
     if action != "UNCHANGED":
         digest = hashlib.sha256(
             f"{investor_id}|{document.instrument_id}|{document.report_date}|"
@@ -600,16 +622,40 @@ def _process_document(db: Session, document: DisclosureDocument) -> dict:
     if not observations:
         observations, llm_parser, llm_errors = extract_with_llm(document.content or b"")
         parser = llm_parser or "NO_PARSER"
+    # LLM-sourced extraction is never auto-applied, regardless of alias-match confidence —
+    # only a deterministic XBRL match is trusted enough to skip human review. This matters
+    # especially here because the LLM prompt itself lists the configured investor aliases,
+    # which raises the risk of a model "correcting" a noisy name into an exact match.
+    is_llm_sourced = parser.startswith("OLLAMA:") or parser.startswith("OPENROUTER:")
     aliases, _ = _alias_maps(db)
     matched = reviews = 0
     actions = {"NEW": 0, "UPDATED": 0, "UNCHANGED": 0}
     for observation in observations:
-        investor_id, confidence, needs_review = match_investor_alias(
+        investor_id, confidence, ambiguous = match_investor_alias(
             observation.shareholder_name, aliases
         )
         if not investor_id:
+            if confidence > 0:
+                # A real candidate existed but scored below the match threshold — leave a
+                # trail instead of silently dropping it, so a followed investor's disclosed
+                # name drifting just under threshold is discoverable without re-parsing the
+                # filing by hand.
+                digest = hashlib.sha256(
+                    f"{document.id}|{observation.shareholder_name}|{confidence}".encode()
+                ).hexdigest()[:20]
+                _notification(
+                    db, f"alias-near-miss:{digest}", "ALIAS_REVIEW",
+                    "Shareholder name fell below the alias-match threshold",
+                    f"'{observation.shareholder_name}' scored {confidence:.2f} against a "
+                    "configured investor alias but was below the match threshold, so no "
+                    "review was created. Check whether a followed investor's disclosed "
+                    "name has changed.",
+                    {"document_id": document.id, "observed_name": observation.shareholder_name,
+                     "confidence": confidence, "source_url": document.source_url},
+                    "INFO",
+                )
             continue
-        if needs_review:
+        if ambiguous or is_llm_sourced:
             reviews += int(_create_review(
                 db, document, observation, investor_id, confidence, parser
             ))

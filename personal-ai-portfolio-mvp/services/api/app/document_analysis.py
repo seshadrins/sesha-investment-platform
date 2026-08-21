@@ -103,9 +103,14 @@ def _invoke(prompt: str, schema: type[BaseModel] = AnalysisPayload) -> tuple[dic
             errors.append(f"Ollama: {exc}")
     if settings.disclosure_llm_provider in {"auto", "openrouter"} and settings.openrouter_api_key:
         try:
+            if settings.openrouter_model == "openrouter/free":
+                raise DocumentAnalysisError(
+                    "A pinned OpenRouter model is required; random free-model routing is disabled."
+                )
             response = httpx.post("https://openrouter.ai/api/v1/chat/completions", headers={
                 "Authorization": f"Bearer {settings.openrouter_api_key}"}, json={
                 "model": settings.openrouter_model, "temperature": 0,
+                "provider": {"data_collection": "deny", "allow_fallbacks": True},
                 "response_format": {"type": "json_schema", "json_schema": {
                     "name": "grounded_document_analysis", "strict": True,
                     "schema": schema.model_json_schema()}},

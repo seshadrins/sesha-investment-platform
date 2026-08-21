@@ -71,10 +71,13 @@ from .automation_schedule import (
     latest_universe_boundary,
 )
 from .automation_runs import (
+    ACTIVE_TRIGGERS,
     automation_metrics,
     automation_run_out,
-    begin_run,
+    begin_scoped_run,
     complete_run,
+    expected_scheduled_for,
+    find_active_run,
     schedule_health,
 )
 from .automation_config import (
@@ -927,13 +930,32 @@ def ingest_exchange_disclosures(
     )
     if not period:
         raise HTTPException(422, "No quarterly disclosure period is due yet.")
+    scheduled_for = expected_scheduled_for(datetime.utcnow(), db)
+    active = find_active_run(db, scheduled_for, ACTIVE_TRIGGERS)
+    if active:
+        raise HTTPException(
+            409,
+            f"A {active.trigger.lower()} analysis run is already in progress for this "
+            f"scheduled window (started {active.started_at.isoformat()}). Try again once "
+            "it completes.",
+        )
+    run, started = begin_scoped_run(db, "FORCED_DISCLOSURES", scheduled_for)
+    if not started:
+        raise HTTPException(
+            409, f"A disclosure ingestion run is already in progress (run {run.id})."
+        )
     try:
-        return run_disclosure_ingestion(
+        result = run_disclosure_ingestion(
             db, period, force=payload.force, mapping_ids=payload.mapping_ids
         )
     except DisclosurePipelineError as exc:
         db.rollback()
+        complete_run(db, run, "FAILED", {}, str(exc))
         raise HTTPException(502, str(exc)) from exc
+    complete_run(
+        db, run, result.get("status", "SUCCESS"), {"investor_disclosures": result.get("status")},
+    )
+    return result
 
 
 @app.get("/investor-disclosures/reviews")
@@ -1689,7 +1711,21 @@ def force_analysis_run(
             "job must be morning, prices, fundamentals, screening, constituents, "
             "disclosures, or snapshot.",
         )
-    run, _ = begin_run(db, datetime.utcnow(), "FORCED", 1)
+    scheduled_for = expected_scheduled_for(datetime.utcnow(), db)
+    if job in {"morning", "disclosures"}:
+        active = find_active_run(db, scheduled_for, ACTIVE_TRIGGERS)
+        if active:
+            raise HTTPException(
+                409,
+                f"A {active.trigger.lower()} analysis run is already in progress for this "
+                f"scheduled window (started {active.started_at.isoformat()}). Try again once "
+                "it completes.",
+            )
+    run, started = begin_scoped_run(db, f"FORCED_{job.upper()}", scheduled_for)
+    if not started:
+        raise HTTPException(
+            409, f"A {job} run for this scheduled window is already in progress (run {run.id})."
+        )
     current_action_ids: set[str] = set()
     try:
         if job == "morning":

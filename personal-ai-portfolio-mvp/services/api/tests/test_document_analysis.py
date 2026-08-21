@@ -44,6 +44,53 @@ def test_text_document_is_sectioned_deduplicated_and_grounded(monkeypatch):
     assert result["citations"][str(section.id)]["excerpt"].startswith("Management")
 
 
+def test_invoke_openrouter_denies_data_collection_and_pins_model(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "disclosure_llm_provider", "openrouter")
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
+    monkeypatch.setattr(settings, "openrouter_model", "openai/gpt-4o-mini")
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": (
+                '{"summary": "ok", "summary_section_ids": [1], "catalysts": [], '
+                '"risks": [], "invalidation_conditions": []}'
+            )}}]}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["json"] = json
+        return FakeResponse()
+
+    monkeypatch.setattr(document_analysis.httpx, "post", fake_post)
+    raw, provider, model = document_analysis._invoke("test prompt")
+    assert provider == "OPENROUTER"
+    assert model == "openai/gpt-4o-mini"
+    assert captured["json"]["provider"]["data_collection"] == "deny"
+
+
+def test_invoke_openrouter_rejects_free_auto_router(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "disclosure_llm_provider", "openrouter")
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
+    monkeypatch.setattr(settings, "openrouter_model", "openrouter/free")
+    monkeypatch.setattr(
+        document_analysis.httpx, "post",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not call out")),
+    )
+    try:
+        document_analysis._invoke("test prompt")
+        assert False, "free-model routing should be rejected"
+    except document_analysis.DocumentAnalysisError as exc:
+        assert "No document-analysis model completed successfully" in str(exc)
+
+
 def test_analysis_rejects_citations_from_another_document(monkeypatch):
     db = db_session()
     instrument = Instrument(exchange="NSE", symbol="XYZ", company_name="XYZ Ltd")
