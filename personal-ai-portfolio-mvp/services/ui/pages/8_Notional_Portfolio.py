@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from common import api_get, api_post, render_sidebar
+from workbench_view import render_scope
 
 render_sidebar()
 st.title("Notional Portfolio")
@@ -58,9 +59,62 @@ if snapshot["unpriced"]:
 if snapshot["pending_orders"]:
     st.info(f"{len(snapshot['pending_orders'])} trade(s) await the next observable stored closing price.")
 
-tabs = st.tabs(["Holdings & trade", "Add stock", "Pending & ledger", "Performance", "Learning", "Cash"])
+tabs = st.tabs([
+    "Portfolio view", "Holdings & trade", "Add stock", "Pending & ledger",
+    "Performance", "Learning", "Cash",
+])
 
 with tabs[0]:
+    holdings = snapshot["holdings"]
+    if not holdings:
+        st.info("No notional holdings yet. Use Add stock to create a simulated buy.")
+    else:
+        st.caption(
+            "Reuses the same Financial Analysis, Investor Style, Followed Investor, and "
+            "Summary & Recommendation views as the main dashboard, scoped to this notional "
+            "portfolio's current holdings."
+        )
+        workbench = api_get("/stock-workbench")
+        owned_by_id = {row["instrument_id"]: row for row in workbench["owned"]}
+        prospective_by_id = {row["instrument_id"]: row for row in workbench["prospective"]}
+
+        # The notional portfolio's own simulated quantity/cost/value stand in for the real
+        # account_positions override render_scope() already supports for the per-account
+        # dashboard filter — same mechanism, different source of the position numbers.
+        notional_positions = {}
+        for item in holdings:
+            cost_basis = (item["quantity"] or 0) * (item["average_cost"] or 0)
+            notional_positions[item["instrument_id"]] = {
+                "account_name": selected_meta["name"],
+                "quantity": item["quantity"],
+                "average_cost": item["average_cost"],
+                "current_price": item["price"],
+                "market_value": item["market_value"],
+                "unrealised_profit": item["unrealised_profit"],
+                "return_pct": (item["unrealised_profit"] / cost_basis) if cost_basis else None,
+                "weight": item["weight"],
+            }
+
+        matched_owned = [owned_by_id[i] for i in notional_positions if i in owned_by_id]
+        matched_prospective = [prospective_by_id[i] for i in notional_positions
+                               if i in prospective_by_id and i not in owned_by_id]
+        unmatched = [item for item in holdings
+                     if item["instrument_id"] not in owned_by_id
+                     and item["instrument_id"] not in prospective_by_id]
+
+        if matched_owned:
+            st.subheader("Owned-type holdings")
+            render_scope(workbench, matched_owned, "OWNED", notional_positions)
+        if matched_prospective:
+            st.subheader("Prospective · Strong Buy holdings")
+            render_scope(workbench, matched_prospective, "PROSPECTIVE")
+        if unmatched:
+            st.info(
+                "No live evidence view for this holding; it no longer appears in Owned or "
+                "Prospective: " + ", ".join(f"{item['stock']} — {item['company_name']}" for item in unmatched)
+            )
+
+with tabs[1]:
     holdings = snapshot["holdings"]
     if not holdings:
         st.info("No notional holdings yet. Use Add stock to create a simulated buy.")
@@ -92,7 +146,7 @@ with tabs[0]:
                 "quantity": quantity, "amount": None, "user_reason": reason or None})
             if result: st.success(f"Trade recorded with status {result['status']}."); st.rerun()
 
-with tabs[1]:
+with tabs[2]:
     if not candidates:
         st.info("No owned or currently recommended stocks are eligible.")
     else:
@@ -113,7 +167,7 @@ with tabs[1]:
             result = api_post(f"/notional-portfolios/{portfolio_id}/trades", json=body)
             if result: st.success(f"Buy recorded with status {result['status']}."); st.rerun()
 
-with tabs[2]:
+with tabs[3]:
     if st.button("Settle against newly stored closes"):
         if api_post(f"/notional-portfolios/{portfolio_id}/settle"): st.rerun()
     if not transactions: st.info("No transactions recorded.")
@@ -133,7 +187,7 @@ with tabs[2]:
                     st.markdown(f"**Transaction {item['id']} · {item['stock']}**")
                     st.json(item["recommendation_snapshot"])
 
-with tabs[3]:
+with tabs[4]:
     history = pd.DataFrame(performance["rows"])
     if history.empty: st.info("Performance appears after a trade executes against a stored close.")
     else:
@@ -146,7 +200,7 @@ with tabs[3]:
         })
     for limitation in performance["limitations"]: st.caption(f"• {limitation}")
 
-with tabs[4]:
+with tabs[5]:
     if not learning["outcomes"]:
         st.info("Recommendation outcomes appear after a recommendation-linked simulated buy executes.")
     else:
@@ -181,7 +235,7 @@ with tabs[4]:
         else: st.info("No recommendation has reached its 12-month evaluation horizon.")
     for limitation in learning["limitations"]: st.caption(f"• {limitation}")
 
-with tabs[5]:
+with tabs[6]:
     with st.form("cash_adjustment"):
         action = st.radio("Cash action", ["CASH_IN", "CASH_OUT", "DIVIDEND"], horizontal=True,
                           format_func=lambda value: value.replace("_", " ").title())

@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py .
 COPY pages ./pages
 COPY common.py .
+COPY workbench_view.py .
 COPY tests ./tests
 
 EXPOSE 8501
