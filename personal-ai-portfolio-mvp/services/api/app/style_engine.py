@@ -9,7 +9,7 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .financial_analysis import _categories, _find_category, _normalise, _number
+from .financial_analysis import _categories, _find_category, _normalise, _number, is_financial_sector
 from .models import Instrument, Price, ResearchSnapshot
 
 
@@ -123,8 +123,7 @@ def evaluate_current_styles(db: Session, instrument: Instrument) -> list[dict]:
     points = point_in_time_features(db, instrument.id)
     if not points:
         return []
-    is_financial = any(word in (instrument.sector or "").lower()
-                       for word in ("bank", "financial", "finance", "insurance"))
+    is_financial = is_financial_sector(instrument.sector)
     output = []
     for style in load_styles():
         result = evaluate_style(style, points[-1])

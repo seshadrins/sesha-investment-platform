@@ -12,6 +12,13 @@ def _normalise(value: str) -> str:
     return value.lower().replace("_", " ").replace("-", " ").strip()
 
 
+def is_financial_sector(sector: str | None) -> bool:
+    """Single shared definition of "financial sector" for both scoring exemptions
+    (here) and style applicability (style_engine.py) — was previously duplicated and
+    could drift out of sync."""
+    return any(word in (sector or "").lower() for word in ("bank", "financial", "finance", "insurance"))
+
+
 def _categories(payload: dict, key: str) -> dict[str, list[dict]]:
     return {_normalise(str(item.get("category", ""))): item.get("history") or []
             for item in (payload.get(key) or [])}
@@ -78,6 +85,9 @@ def build_financial_analysis(db: Session, instrument: Instrument) -> dict:
     balance_payload = evidence["BALANCE_SHEET"].payload
     balance_history = balance_payload.get("history") or []
     assets = _number(balance_history[0].get("total_asset")) if balance_history else None
+    # Checked against 90 real stored Upstox BALANCE_SHEET snapshots: total_liability is
+    # liabilities-only (ratios spread naturally from 0.03 to 0.94, e.g. banks legitimately
+    # near the top), not liabilities+equity — so this ratio isn't structurally capped near 1.0.
     liabilities = _number(balance_history[0].get("total_liability")) if balance_history else None
     leverage_proxy = liabilities / assets if assets not in (None, 0) and liabilities is not None else None
 
@@ -90,8 +100,7 @@ def build_financial_analysis(db: Session, instrument: Instrument) -> dict:
     operating_margin = latest_operating / latest_revenue * 100 if latest_revenue not in (None, 0) and latest_operating is not None else None
     net_margin = latest_net / latest_revenue * 100 if latest_revenue not in (None, 0) and latest_net is not None else None
 
-    sector = (instrument.sector or "").lower()
-    financial_sector = any(word in sector for word in ("bank", "financial", "finance", "insurance"))
+    financial_sector = is_financial_sector(instrument.sector)
     scores = {
         "roce": _score_high((ratios.get("ROCE") or {}).get("company")),
         "roe": _score_high((ratios.get("ROE") or {}).get("company")),
@@ -117,6 +126,17 @@ def build_financial_analysis(db: Session, instrument: Instrument) -> dict:
             newest, previous = _number(history[0].get("value")), _number(history[1].get("value"))
             if newest is not None and previous is not None and previous - newest >= 2:
                 flags.append({"severity": "MEDIUM", "message": f"Promoter holding fell {previous - newest:.2f} percentage points in the latest quarter."})
+        # A steady multi-quarter decline (e.g. ~1.9pp/quarter for two years) never crosses
+        # the single-quarter threshold above but is a real governance signal cumulatively —
+        # look at up to the last 8 reported quarters (~2 years) as well.
+        if len(history) >= 3:
+            window = history[:8]
+            newest, oldest = _number(window[0].get("value")), _number(window[-1].get("value"))
+            if newest is not None and oldest is not None and oldest - newest >= 5:
+                flags.append({"severity": "MEDIUM", "message": (
+                    f"Promoter holding fell {oldest - newest:.2f} percentage points cumulatively "
+                    f"over the last {len(window)} reported quarters."
+                )})
 
     valuation_history = db.scalars(select(ValuationMetricSnapshot).where(
         ValuationMetricSnapshot.instrument_id == instrument.id,

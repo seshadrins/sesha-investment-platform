@@ -172,3 +172,34 @@ def test_saving_thesis_patches_cached_workbench_snapshot_immediately(client, ses
     owned_row = second.json()["owned"][0]
     assert owned_row["portfolio"]["thesis_status"] == "WATCH"
     assert owned_row["portfolio"]["thesis_reason"] == "Reassessing after a governance flag."
+
+
+def test_same_day_sell_before_buy_is_rejected_by_the_oversell_guard(client, session_factory):
+    db = session_factory()
+    account = Account(name="RouteTest", broker_name="Manual", currency="INR")
+    instrument = Instrument(exchange="NSE", symbol="ROUTE", company_name="Route Ltd")
+    db.add_all([account, instrument])
+    db.commit()
+    account_id, instrument_id = account.id, instrument.id
+    db.close()
+
+    # Posted in this order (SELL before its matching BUY exists), both dated the same day —
+    # the oversell guard must reject the SELL immediately rather than let a same-day
+    # ordering quirk silently corrupt the ledger.
+    sell_response = client.post("/transactions", json={
+        "account_id": account_id, "instrument_id": instrument_id,
+        "transaction_type": "SELL", "trade_date": "2026-01-05",
+        "quantity": 5, "price": 120, "charges": 0,
+    })
+    assert sell_response.status_code == 400
+
+    buy_response = client.post("/transactions", json={
+        "account_id": account_id, "instrument_id": instrument_id,
+        "transaction_type": "BUY", "trade_date": "2026-01-05",
+        "quantity": 10, "price": 100, "charges": 0,
+    })
+    assert buy_response.status_code == 200
+
+    db = session_factory()
+    assert db.query(Transaction).count() == 1
+    db.close()

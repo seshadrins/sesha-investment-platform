@@ -7,9 +7,10 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from .financial_analysis import build_financial_analysis
 from .models import Account, Instrument, Price, Thesis, Transaction
 from .portfolio import calculate_position
-from .recommendations import recommend
+from .recommendations import recommend, valuation_signals
 
 
 def portfolio_snapshot(db: Session) -> dict:
@@ -102,6 +103,7 @@ def portfolio_snapshot(db: Session) -> dict:
             }
         )
 
+    analysis_cache: dict[int, dict] = {}
     for item in provisional:
         weight = (
             item["market_value"] / float(total_market_value)
@@ -109,12 +111,23 @@ def portfolio_snapshot(db: Session) -> dict:
             else 0.0
         )
         thesis = theses.get(item["instrument_id"])
+        instrument_id = item["instrument_id"]
+        if instrument_id not in analysis_cache:
+            analysis_cache[instrument_id] = build_financial_analysis(db, instruments[instrument_id])
+        analysis = analysis_cache[instrument_id]
+        # A stock's own quality/valuation evidence only counts toward BUY_MORE when the
+        # analysis is actually ready — financial-sector companies need dedicated rules
+        # (like recommend_prospective()) and missing data must not silently unlock the gate.
+        financial_score = analysis.get("overall_score") if analysis.get("status") == "READY" else None
+        _, valuation_stretched, _ = valuation_signals(analysis)
         action, reasons = recommend(
             weight=weight,
             return_pct=item["return_pct"],
             holding_days=item["holding_days"],
             thesis_status=thesis.status if thesis else None,
             has_price=item["current_price"] is not None,
+            financial_score=financial_score,
+            valuation_stretched=valuation_stretched,
         )
         item["weight"] = weight
         item["recommendation"] = action
