@@ -107,8 +107,8 @@ with tabs[0]:
             st.subheader("Owned-type holdings")
             render_scope(workbench, matched_owned, "OWNED", notional_positions)
         if matched_prospective:
-            st.subheader("Prospective · Strong Buy holdings")
-            render_scope(workbench, matched_prospective, "PROSPECTIVE")
+            st.subheader("Prospective · Buy & Strong Buy holdings")
+            render_scope(workbench, matched_prospective, "PROSPECTIVE", notional_positions)
         if unmatched:
             st.info(
                 "No live evidence view for this holding; it no longer appears in Owned or "
