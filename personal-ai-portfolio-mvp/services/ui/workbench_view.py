@@ -12,6 +12,27 @@ def stock_name(row):
     return f"{row['exchange']}:{row['symbol']}"
 
 
+def render_deep_link_buttons(rows, selected_indices, scope, source):
+    """The row-selection-derived jump buttons shared by portfolio_tab and summary_tab, so
+    both offer the same three destinations instead of each wiring up only part of the set.
+    `source` (distinct per calling tab) keeps widget keys unique — every `with tab:` block
+    inside st.tabs() still executes each rerun regardless of which tab is visible, so two
+    calls with the same scope but no `source` would collide on the same key."""
+    if not selected_indices:
+        return
+    selected_row = rows[selected_indices[0]]
+    jump_cols = st.columns([1, 1, 1, 3])
+    if jump_cols[0].button("Review thesis →", key=f"jump_thesis_{scope}_{source}"):
+        st.session_state["deep_link_symbol"] = stock_name(selected_row)
+        st.switch_page("pages/3_Thesis_and_Review.py")
+    if jump_cols[1].button("Open Financial Analysis", key=f"jump_financial_{scope}_{source}"):
+        st.session_state["deep_link_symbol"] = stock_name(selected_row)
+        st.switch_page("pages/4_Financial_Analysis.py")
+    if jump_cols[2].button("Open Investor Style Fit", key=f"jump_styles_{scope}_{source}"):
+        st.session_state["deep_link_symbol"] = stock_name(selected_row)
+        st.switch_page("pages/5_Investor_Styles.py")
+
+
 def _price_move_marker(current, previous):
     """Blank rather than a guess when there's no prior stored close yet (new instrument,
     cold start) — an absent arrow reads as "unknown", a stale/wrong arrow would not."""
@@ -136,11 +157,7 @@ def render_scope(workbench, rows, scope, account_positions=None):
                 "Select a row, then open its thesis to see or update the reasoning behind it."
             )
             selected_indices = event.selection.rows if event and event.selection else []
-            if selected_indices:
-                selected_row = rows[selected_indices[0]]
-                if st.button("Review thesis →", key=f"jump_thesis_{scope}"):
-                    st.session_state["deep_link_symbol"] = stock_name(selected_row)
-                    st.switch_page("pages/3_Thesis_and_Review.py")
+            render_deep_link_buttons(rows, selected_indices, scope, "portfolio")
 
     with data_tab:
         frame = pd.DataFrame([{
@@ -244,15 +261,7 @@ def render_scope(workbench, rows, scope, account_positions=None):
                 "flags or Style Fit detail with that stock already selected."
             )
             selected_indices = event.selection.rows if event and event.selection else []
-            if selected_indices:
-                selected_row = rows[selected_indices[0]]
-                jump_cols = st.columns([1, 1, 4])
-                if jump_cols[0].button("Open Financial Analysis", key=f"jump_financial_{scope}"):
-                    st.session_state["deep_link_symbol"] = stock_name(selected_row)
-                    st.switch_page("pages/4_Financial_Analysis.py")
-                if jump_cols[1].button("Open Investor Style Fit", key=f"jump_styles_{scope}"):
-                    st.session_state["deep_link_symbol"] = stock_name(selected_row)
-                    st.switch_page("pages/5_Investor_Styles.py")
+            render_deep_link_buttons(rows, selected_indices, scope, "summary")
         st.download_button(
             f"Download {scope.lower()} summary",
             frame.to_csv(index=False).encode("utf-8"),
