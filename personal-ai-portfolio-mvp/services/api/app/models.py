@@ -32,6 +32,11 @@ class Account(Base):
     name: Mapped[str] = mapped_column(String(120), unique=True)
     broker_name: Mapped[str] = mapped_column(String(120), default="Manual")
     currency: Mapped[str] = mapped_column(String(8), default="INR")
+    # Deployable/uninvested cash the user has manually set for this account (G3) — there is
+    # no cash transaction ledger; this is a point-in-time figure the user updates directly,
+    # matching the MVP's "how much do I have to deploy" question without building a full
+    # cash-movement history.
+    cash_balance: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="account")

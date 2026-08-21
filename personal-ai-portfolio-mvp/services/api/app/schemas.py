@@ -13,7 +13,12 @@ class AccountCreate(BaseModel):
 
 class AccountOut(AccountCreate):
     id: int
+    cash_balance: Decimal
     model_config = ConfigDict(from_attributes=True)
+
+
+class AccountCashUpdate(BaseModel):
+    cash_balance: Decimal = Field(ge=0)
 
 
 class InstrumentCreate(BaseModel):
@@ -74,6 +79,10 @@ class UpstoxSyncRequest(BaseModel):
 
 class WatchlistCreate(BaseModel):
     instrument_id: int
+    notes: str | None = None
+
+
+class WatchTierCreate(BaseModel):
     notes: str | None = None
 
 

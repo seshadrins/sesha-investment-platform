@@ -13,10 +13,12 @@ here instead of pulling in the whole FastAPI app just to reach three functions.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -34,7 +36,9 @@ from .financial_analysis import build_financial_analysis
 from .investor_following import build_investor_signals, load_investor_config
 from .ipo_lifecycle import discover_sebi_ipos, post_listing_monitor
 from .models import (
+    Account,
     AnalysisSnapshot,
+    AppNotification,
     DisclosureDocument,
     DisclosureSourceMapping,
     Instrument,
@@ -65,7 +69,7 @@ from .screening import (
     select_balanced_memberships,
     ScreeningSourceError,
 )
-from .services import portfolio_snapshot
+from .services import portfolio_diversification, portfolio_snapshot
 from .style_engine import evaluate_current_styles, load_styles
 
 
@@ -97,6 +101,33 @@ def list_prospective_stocks_data(db: Session) -> list[dict]:
             "company_name": instrument.company_name, "isin": instrument.isin,
             "sector": instrument.sector, "added_at": item.added_at.isoformat(), "notes": item.notes,
             "source": item.source,
+            "recommendation": action, "recommendation_reasons": reasons,
+            "financial_score": analysis.get("overall_score"),
+            "style_matches": sum(style.get("matches", False) for style in styles),
+            "analysis_status": analysis.get("status")})
+    return output
+
+
+def list_watching_stocks_data(db: Session) -> list[dict]:
+    """The mid-funnel watchlist (G7): stocks the user is deliberately tracking that don't
+    (yet) pass the Strong Buy gate, distinct from Owned and from Prospective-Strong-Buy.
+    Shows whatever recommend_prospective() currently rates them, unfiltered — that's the
+    whole point of a "tell me if it changes" list."""
+    owned_ids = {position["instrument_id"] for position in _snapshot_or_409(db)["positions"]}
+    rows = db.execute(select(WatchlistItem, Instrument).join(
+        Instrument, WatchlistItem.instrument_id == Instrument.id
+    ).where(WatchlistItem.status == "WATCHING").order_by(Instrument.company_name)).all()
+    output = []
+    for item, instrument in rows:
+        if instrument.id in owned_ids:
+            continue
+        analysis = build_financial_analysis(db, instrument)
+        styles = evaluate_current_styles(db, instrument)
+        action, reasons = recommend_prospective(analysis, styles)
+        output.append({"watchlist_id": item.id, "instrument_id": instrument.id,
+            "exchange": instrument.exchange, "symbol": instrument.symbol,
+            "company_name": instrument.company_name, "isin": instrument.isin,
+            "sector": instrument.sector, "added_at": item.added_at.isoformat(), "notes": item.notes,
             "recommendation": action, "recommendation_reasons": reasons,
             "financial_score": analysis.get("overall_score"),
             "style_matches": sum(style.get("matches", False) for style in styles),
@@ -362,8 +393,15 @@ def _build_stock_workbench(db: Session):
                   for instrument_id, data in owned.items()]
     prospective_rows = [build_row(instrument_id, "PROSPECTIVE", data)
                         for instrument_id, data in prospective.items()]
-    for rows in (owned_rows, prospective_rows):
-        rows.sort(key=lambda item: (item["company_name"], item["symbol"]))
+    # Owned rows lead with what actually needs a decision this week (G6): STRONG_SELL down
+    # to BUY_MORE, not alphabetical order, which gave a STRONG_SELL no more visual priority
+    # than a BUY_MORE 29 rows below it. Prospective rows are all STRONG_BUY by construction
+    # (list_prospective_stocks_data() already filters to that), so severity carries no
+    # information there — alphabetical stays the useful order.
+    owned_rows.sort(key=lambda item: (
+        -severity.get(item["summary"]["recommendation"], 0), item["company_name"], item["symbol"],
+    ))
+    prospective_rows.sort(key=lambda item: (item["company_name"], item["symbol"]))
     return {
         "as_of": snapshot["as_of"],
         "summary": snapshot["summary"],
@@ -376,10 +414,51 @@ def _build_stock_workbench(db: Session):
     }
 
 
+def _notify_recommendation_changes(db: Session, previous_payload: dict | None, current_payload: dict) -> None:
+    """Emit an AppNotification for every owned stock whose recommendation changed since the
+    last stored snapshot (G5). The scheduler already recomputes every owned recommendation
+    on every run — this is the difference between that being visible only if the user
+    happens to open the dashboard and notice it in the table, versus something that tells
+    the user when it actually needs attention. Skipped on the very first snapshot (no prior
+    payload to diff against, so nothing has "changed" yet)."""
+    if not previous_payload:
+        return
+    previous_by_id = {row["instrument_id"]: row["summary"]["recommendation"]
+                      for row in previous_payload.get("owned", [])}
+    changed = False
+    for row in current_payload.get("owned", []):
+        old = previous_by_id.get(row["instrument_id"])
+        new = row["summary"]["recommendation"]
+        if old is None or old == new:
+            continue
+        stock = f"{row['exchange']}:{row['symbol']}"
+        reasons = row["summary"].get("reasons") or []
+        severity = "WARNING" if new in {"SELL", "STRONG_SELL", "TRIM", "REVIEW"} else "INFO"
+        db.add(AppNotification(
+            event_key=f"recommendation-change:{row['instrument_id']}:{date.today().isoformat()}:{old}->{new}",
+            category="RECOMMENDATION", severity=severity,
+            title=f"{stock} recommendation changed: {old.replace('_', ' ')} → {new.replace('_', ' ')}",
+            message=f"{row['company_name']} ({stock}) moved from {old.replace('_', ' ')} to "
+                    f"{new.replace('_', ' ')}." + (f" {reasons[0]}" if reasons else ""),
+            payload={"instrument_id": row["instrument_id"], "stock": stock,
+                     "old_recommendation": old, "new_recommendation": new, "reasons": reasons},
+        ))
+        changed = True
+    if not changed:
+        return
+    try:
+        db.commit()
+        from .disclosure_pipeline import deliver_notifications
+        deliver_notifications(db)
+    except IntegrityError:
+        db.rollback()
+
+
 def _store_workbench_snapshot(db: Session, payload: dict) -> AnalysisSnapshot:
     snapshot = db.scalar(select(AnalysisSnapshot).where(
         AnalysisSnapshot.snapshot_key == "stock_workbench"
     ))
+    _notify_recommendation_changes(db, snapshot.payload if snapshot else None, payload)
     now = datetime.utcnow()
     if not snapshot:
         snapshot = AnalysisSnapshot(snapshot_key="stock_workbench")
@@ -392,6 +471,53 @@ def _store_workbench_snapshot(db: Session, payload: dict) -> AnalysisSnapshot:
     db.commit()
     db.refresh(snapshot)
     return snapshot
+
+
+def deployment_plan_data(db: Session) -> dict:
+    """"I have cash to deploy — here's where it should go" (G8): a single ranked view
+    spanning both rebalancing (trim overweight/deteriorating owned positions) and new-idea
+    sourcing (Prospective Strong Buy + the G7 watching tier), scoped by what's actually
+    deployable (G3's account cash) and the portfolio's current sector/cap-segment mix (G2)
+    so a suggestion doesn't just add to an already-concentrated corner of the portfolio."""
+    snapshot = db.scalar(select(AnalysisSnapshot).where(
+        AnalysisSnapshot.snapshot_key == "stock_workbench"
+    ))
+    payload = snapshot.payload if snapshot and snapshot.payload else _build_stock_workbench(db)
+    available_cash = db.scalar(select(func.sum(Account.cash_balance))) or Decimal("0")
+
+    trim_candidates = [{
+        "instrument_id": row["instrument_id"], "stock": f"{row['exchange']}:{row['symbol']}",
+        "company_name": row["company_name"], "recommendation": row["summary"]["recommendation"],
+        "reasons": row["summary"]["reasons"], "market_value": row["portfolio"]["market_value"],
+        "weight": row["portfolio"]["weight"],
+    } for row in payload["owned"] if row["summary"]["recommendation"] in {"TRIM", "SELL", "STRONG_SELL"}]
+
+    buy_candidates = [{
+        "instrument_id": row["instrument_id"], "stock": f"{row['exchange']}:{row['symbol']}",
+        "company_name": row["company_name"], "sector": row["sector"],
+        "tier": "PROSPECTIVE_STRONG_BUY", "recommendation": row["summary"]["recommendation"],
+        "financial_score": row["financials"]["overall_score"],
+        "reasons": row["summary"]["reasons"],
+    } for row in payload["prospective"]]
+    for item in list_watching_stocks_data(db):
+        if item["recommendation"] in {"STRONG_BUY", "BUY"}:
+            buy_candidates.append({
+                "instrument_id": item["instrument_id"],
+                "stock": f"{item['exchange']}:{item['symbol']}",
+                "company_name": item["company_name"], "sector": item["sector"],
+                "tier": "WATCHING", "recommendation": item["recommendation"],
+                "financial_score": item["financial_score"],
+                "reasons": item["recommendation_reasons"],
+            })
+    buy_candidates.sort(key=lambda item: (
+        item["recommendation"] != "STRONG_BUY", -(item["financial_score"] or 0),
+    ))
+
+    return {
+        "as_of": payload.get("as_of"), "available_cash": float(available_cash),
+        "trim_candidates": trim_candidates, "buy_candidates": buy_candidates,
+        "diversification": portfolio_diversification(db),
+    }
 
 
 def _patch_workbench_thesis(db: Session, instrument_id: int, thesis: Thesis | None) -> None:

@@ -26,6 +26,7 @@ class PositionResult:
     realised_profit: Decimal
     dividend_income: Decimal
     first_purchase_date: date | None
+    remaining_lots: list[Lot]
 
 
 def calculate_position(transactions: Iterable[Transaction]) -> PositionResult:
@@ -84,4 +85,5 @@ def calculate_position(transactions: Iterable[Transaction]) -> PositionResult:
         realised_profit=realised,
         dividend_income=dividends,
         first_purchase_date=first_open_date,
+        remaining_lots=lots,
     )

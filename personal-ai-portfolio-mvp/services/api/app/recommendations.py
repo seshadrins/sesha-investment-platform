@@ -28,6 +28,8 @@ def recommend(
     has_price: bool,
     financial_score: int | None = None,
     valuation_stretched: bool = False,
+    horizon_elapsed: bool = False,
+    target_horizon_months: int | None = None,
 ) -> tuple[str, list[str]]:
     reasons: list[str] = []
 
@@ -73,8 +75,19 @@ def recommend(
             "consider partial profit realisation and rebalancing."
         ]
 
-    if thesis_status == ThesisStatus.WATCH:
-        return "REVIEW", ["The thesis is on watch and should be reassessed before adding."]
+    # An elapsed holding horizon surfaces REVIEW independent of price/weight conditions — a
+    # stated 12-month thesis that's now 18 months old shouldn't get the same treatment as one
+    # bought yesterday, even if nothing else about the position looks alarming.
+    if thesis_status == ThesisStatus.WATCH or horizon_elapsed:
+        horizon_reasons = []
+        if thesis_status == ThesisStatus.WATCH:
+            horizon_reasons.append("The thesis is on watch and should be reassessed before adding.")
+        if horizon_elapsed:
+            horizon_reasons.append(
+                f"The stated {target_horizon_months}-month investment horizon has elapsed "
+                f"({holding_days} days held); reassess the thesis."
+            )
+        return "REVIEW", horizon_reasons
 
     if weight < settings.max_position_weight * 0.50 and (return_pct or 0) > -0.05:
         if (

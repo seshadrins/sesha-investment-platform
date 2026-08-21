@@ -1,6 +1,6 @@
 import streamlit as st
 
-from common import api_get, api_post, render_sidebar
+from common import api_get, api_patch, api_post, render_sidebar
 
 render_sidebar()
 st.title("Portfolio Setup")
@@ -30,7 +30,27 @@ with account_tab:
                     st.rerun()
     if accounts:
         st.subheader("Current accounts")
-        st.dataframe(accounts, width="stretch", hide_index=True, column_order=["name", "broker_name", "currency"])
+        st.dataframe(accounts, width="stretch", hide_index=True,
+            column_order=["name", "broker_name", "currency", "cash_balance"],
+            column_config={"cash_balance": st.column_config.NumberColumn("Cash", format="₹%.2f")})
+
+        st.subheader("Deployable cash")
+        st.caption(
+            "There is no cash transaction ledger — set each account's current uninvested "
+            "cash directly (e.g. from your broker statement) so \"how much do I have to "
+            "deploy\" is answerable in-app."
+        )
+        account_options = {item["name"]: item for item in accounts}
+        with st.form("update_cash"):
+            account_label = st.selectbox("Account", list(account_options))
+            selected = account_options[account_label]
+            new_cash = st.number_input("Cash balance", min_value=0.0,
+                value=float(selected["cash_balance"]), step=1000.0, format="%.2f")
+            if st.form_submit_button("Update cash balance"):
+                result = api_patch(f"/accounts/{selected['id']}/cash", json={"cash_balance": new_cash})
+                if result:
+                    st.success(f"{selected['name']}'s cash balance is now ₹{new_cash:,.2f}.")
+                    st.rerun()
 
 with opening_tab:
     st.subheader("Import opening holdings")

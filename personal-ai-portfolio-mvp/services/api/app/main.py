@@ -42,6 +42,7 @@ from .models import (
     WatchlistItem,
 )
 from .schemas import (
+    AccountCashUpdate,
     AccountCreate,
     AliasReviewDecision,
     AccountOut,
@@ -62,6 +63,7 @@ from .schemas import (
     TransactionCreate,
     UpstoxSyncRequest,
     WatchlistCreate,
+    WatchTierCreate,
 )
 from .config import settings
 from .automation_schedule import (
@@ -84,7 +86,8 @@ from .automation_runs import (
 from .automation_config import (
     AutomationConfigError, effective_schedule, schedule_out, update_schedule,
 )
-from .services import portfolio_snapshot
+from .services import portfolio_diversification, portfolio_snapshot
+from .real_portfolio_performance import real_performance_history
 from .providers import (
     CsvCompanyResearchProvider,
     CsvMarketDataProvider,
@@ -159,7 +162,9 @@ from .automation_pipeline import (
     _snapshot_or_409,
     _store_workbench_snapshot,
     _upstox_instruments,
+    deployment_plan_data,
     list_prospective_stocks_data,
+    list_watching_stocks_data,
 )
 
 app = FastAPI(
@@ -202,6 +207,20 @@ def create_account(payload: AccountCreate, db: Session = Depends(get_db)):
 @app.get("/accounts", response_model=list[AccountOut])
 def list_accounts(db: Session = Depends(get_db)):
     return db.scalars(select(Account).order_by(Account.name)).all()
+
+
+@app.patch("/accounts/{account_id}/cash", response_model=AccountOut)
+def update_account_cash(account_id: int, payload: AccountCashUpdate, db: Session = Depends(get_db)):
+    """Set the account's deployable/uninvested cash figure (G3). There is no cash
+    transaction ledger — the user sets this directly, the same way a brokerage statement's
+    cash balance is a point-in-time figure the app has no other way to know."""
+    account = db.get(Account, account_id)
+    if not account:
+        raise HTTPException(404, "Account not found.")
+    account.cash_balance = payload.cash_balance
+    db.commit()
+    db.refresh(account)
+    return account
 
 
 @app.post("/instruments", response_model=InstrumentOut)
@@ -281,6 +300,32 @@ def archive_watchlist_item(instrument_id: int, db: Session = Depends(get_db)):
     item.status = "ARCHIVED"
     db.commit()
     return {"instrument_id": instrument_id, "status": item.status}
+
+
+@app.post("/watchlist/{instrument_id}/watch")
+def add_to_watching(instrument_id: int, payload: WatchTierCreate, db: Session = Depends(get_db)):
+    """The G7 mid-funnel tier: track a stock the user is researching without requiring it
+    to already pass the Strong Buy gate — unlike POST /watchlist, which does."""
+    instrument = db.get(Instrument, instrument_id)
+    if not instrument:
+        raise HTTPException(404, "Instrument not found.")
+    item = db.scalar(select(WatchlistItem).where(WatchlistItem.instrument_id == instrument_id))
+    if item:
+        item.status = "WATCHING"
+        item.source = "MANUAL_WATCHING"
+        item.notes = payload.notes if payload.notes is not None else item.notes
+    else:
+        item = WatchlistItem(instrument_id=instrument_id, status="WATCHING",
+                             source="MANUAL_WATCHING", notes=payload.notes)
+        db.add(item)
+    db.commit()
+    db.refresh(item)
+    return {"id": item.id, "instrument_id": item.instrument_id, "status": item.status}
+
+
+@app.get("/watchlist/watching")
+def list_watching(db: Session = Depends(get_db)):
+    return list_watching_stocks_data(db)
 
 
 @app.get("/prospective-stocks")
@@ -569,6 +614,27 @@ def list_decisions(db: Session = Depends(get_db)):
 @app.get("/portfolio")
 def get_portfolio(db: Session = Depends(get_db)):
     return _snapshot_or_409(db)
+
+
+@app.get("/portfolio/performance")
+def get_portfolio_performance(
+    benchmark_instrument_id: int | None = Query(default=None), db: Session = Depends(get_db)
+):
+    """Real-ledger return/drawdown/benchmark history (G1) — the equivalent of what
+    /notional-portfolios/{id}/performance already computes for the simulated ledger."""
+    return jsonable_encoder(real_performance_history(db, benchmark_instrument_id))
+
+
+@app.get("/portfolio/diversification")
+def get_portfolio_diversification(db: Session = Depends(get_db)):
+    """Portfolio-level sector/cap-segment breakdown (G2)."""
+    return portfolio_diversification(db)
+
+
+@app.get("/portfolio/deployment-plan")
+def get_deployment_plan(db: Session = Depends(get_db)):
+    """"I have cash to deploy — where should it go" (G8)."""
+    return jsonable_encoder(deployment_plan_data(db))
 
 
 def _get_or_create_account(db: Session, name: str, broker: str) -> Account:

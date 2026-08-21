@@ -3,21 +3,31 @@ from datetime import date, datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from decimal import Decimal
+
+from sqlalchemy import select
+
 from app.automation_pipeline import (
     _automation_job_definitions,
+    _build_stock_workbench,
     _latest_automation_results,
     _priority_financial_instruments,
     _record_automation_status,
     _refresh_universe_if_due,
     _snapshot_metadata,
+    _store_workbench_snapshot,
     _upstox_instruments,
 )
 from app.database import Base
 from app.models import (
     Account,
     AnalysisSnapshot,
+    AppNotification,
     Instrument,
     NotionalTransaction,
+    Price,
+    Thesis,
+    ThesisStatus,
     Transaction,
     TransactionType,
     UniverseMembership,
@@ -169,3 +179,88 @@ def test_refresh_universe_if_due_reports_current_without_touching_the_network_wh
     result = _refresh_universe_if_due(db)
     assert result["status"] == "CURRENT"
     assert result["refreshed"] is False
+
+
+def _seeded_two_stock_portfolio(db):
+    """AAA Company is alphabetically first but ends up a plain HOLD; ZZZ Company is
+    alphabetically last but ends up STRONG_SELL via an invalid thesis — a large ANCHOR
+    position keeps both positions' weight well under the TRIM threshold so severity, not
+    weight, decides the outcome."""
+    account = Account(name="Main", broker_name="Manual", currency="INR")
+    anchor = Instrument(exchange="NSE", symbol="ANCHOR", company_name="Anchor Ltd")
+    aaa = Instrument(exchange="NSE", symbol="AAACO", company_name="AAA Company")
+    zzz = Instrument(exchange="NSE", symbol="ZZZCO", company_name="ZZZ Company")
+    db.add_all([account, anchor, aaa, zzz])
+    db.flush()
+    db.add_all([
+        Transaction(account_id=account.id, instrument_id=anchor.id,
+            transaction_type=TransactionType.BUY, trade_date=date(2020, 1, 1),
+            quantity=Decimal("9000"), price=Decimal("100"), charges=Decimal("0")),
+        Transaction(account_id=account.id, instrument_id=aaa.id,
+            transaction_type=TransactionType.BUY, trade_date=date(2025, 1, 1),
+            quantity=Decimal("100"), price=Decimal("100"), charges=Decimal("0")),
+        Transaction(account_id=account.id, instrument_id=zzz.id,
+            transaction_type=TransactionType.BUY, trade_date=date(2025, 1, 1),
+            quantity=Decimal("100"), price=Decimal("100"), charges=Decimal("0")),
+        Price(instrument_id=anchor.id, price_date=date.today(), close_price=Decimal("100")),
+        Price(instrument_id=aaa.id, price_date=date.today(), close_price=Decimal("100")),
+        Price(instrument_id=zzz.id, price_date=date.today(), close_price=Decimal("100")),
+    ])
+    db.commit()
+    return account, anchor, aaa, zzz
+
+
+# ---- G6: owned rows sort by recommendation severity, not alphabetically ----
+
+def test_owned_workbench_rows_sort_by_severity_not_alphabetically():
+    db = session()
+    _account, _anchor, aaa, zzz = _seeded_two_stock_portfolio(db)
+    db.add(Thesis(instrument_id=zzz.id, status=ThesisStatus.INVALID))
+    db.commit()
+
+    payload = _build_stock_workbench(db)
+    owned_symbols = [row["symbol"] for row in payload["owned"]]
+    assert owned_symbols.index("ZZZCO") < owned_symbols.index("AAACO")
+    zzz_row = next(row for row in payload["owned"] if row["symbol"] == "ZZZCO")
+    assert zzz_row["summary"]["recommendation"] == "STRONG_SELL"
+
+
+# ---- G5: a recommendation transition on an owned stock produces exactly one notification ----
+
+def test_recommendation_transition_produces_exactly_one_notification():
+    db = session()
+    _account, _anchor, aaa, zzz = _seeded_two_stock_portfolio(db)
+
+    first_payload = _build_stock_workbench(db)
+    _store_workbench_snapshot(db, first_payload)
+    assert db.scalar(select(AppNotification).where(
+        AppNotification.category == "RECOMMENDATION"
+    )) is None  # no prior snapshot to diff against on the very first store
+
+    db.add(Thesis(instrument_id=zzz.id, status=ThesisStatus.INVALID))
+    db.commit()
+    second_payload = _build_stock_workbench(db)
+    _store_workbench_snapshot(db, second_payload)
+    notifications = db.scalars(select(AppNotification).where(
+        AppNotification.category == "RECOMMENDATION"
+    )).all()
+    assert len(notifications) == 1
+    assert "STRONG SELL" in notifications[0].title
+    assert notifications[0].payload["new_recommendation"] == "STRONG_SELL"
+    assert notifications[0].payload["instrument_id"] == zzz.id
+
+
+def test_unchanged_recommendation_produces_no_new_notification():
+    db = session()
+    _account, _anchor, aaa, zzz = _seeded_two_stock_portfolio(db)
+
+    first_payload = _build_stock_workbench(db)
+    _store_workbench_snapshot(db, first_payload)
+
+    # Rebuild and store again with nothing changed.
+    second_payload = _build_stock_workbench(db)
+    _store_workbench_snapshot(db, second_payload)
+
+    assert db.scalar(select(AppNotification).where(
+        AppNotification.category == "RECOMMENDATION"
+    )) is None

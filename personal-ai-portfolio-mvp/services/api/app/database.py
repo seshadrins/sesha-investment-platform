@@ -83,6 +83,11 @@ def apply_additive_migrations() -> None:
                 connection, "screening_results", "ck_screening_result_recommendation_vocabulary",
                 "CHECK (recommendation IN ('STRONG_BUY','BUY','WATCH','AVOID','REVIEW'))",
             )
+        if "accounts" in tables:
+            connection.execute(text(
+                "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS cash_balance NUMERIC(18,4) "
+                "NOT NULL DEFAULT 0"
+            ))
 
 
 def _add_check_constraint_if_missing(

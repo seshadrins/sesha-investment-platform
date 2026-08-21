@@ -162,6 +162,36 @@ def test_review_when_thesis_on_watch_without_loss():
     assert "reassessed before adding" in reasons[0]
 
 
+def test_elapsed_thesis_horizon_surfaces_review_independent_of_price_or_weight():
+    action, reasons = recommend(
+        weight=.05, return_pct=.02, holding_days=400,
+        thesis_status=ThesisStatus.ACTIVE, has_price=True,
+        horizon_elapsed=True, target_horizon_months=12,
+    )
+    assert action == "REVIEW"
+    assert any("12-month investment horizon has elapsed" in r for r in reasons)
+
+
+def test_horizon_not_elapsed_does_not_force_review():
+    action, reasons = recommend(
+        weight=.05, return_pct=.02, holding_days=100,
+        thesis_status=ThesisStatus.ACTIVE, has_price=True,
+        horizon_elapsed=False, target_horizon_months=12,
+    )
+    assert action != "REVIEW"
+
+
+def test_watch_thesis_and_elapsed_horizon_both_surface_in_reasons():
+    action, reasons = recommend(
+        weight=.05, return_pct=.02, holding_days=400,
+        thesis_status=ThesisStatus.WATCH, has_price=True,
+        horizon_elapsed=True, target_horizon_months=6,
+    )
+    assert action == "REVIEW"
+    assert any("reassessed before adding" in r for r in reasons)
+    assert any("6-month investment horizon has elapsed" in r for r in reasons)
+
+
 def test_priority_ordering_surfaces_both_loss_and_weight_reasons():
     # Regression for the Medium priority-ordering bug: a position that's both overweight
     # and past the loss-review threshold used to report only the weight reason (TRIM).

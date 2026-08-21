@@ -22,6 +22,25 @@ workbench = api_get("/stock-workbench")
 automation = api_get("/analysis-schedule", critical=False) or {}
 TABLE_HEIGHT = 650
 
+# G5: the scheduler already recomputes every owned stock's recommendation on every run —
+# this is what makes a change visible the moment the user next opens the dashboard, rather
+# than only if they happen to notice it in the table.
+recommendation_alerts = api_get(
+    "/notifications?category=RECOMMENDATION&unread_only=true&limit=20", critical=False
+) or []
+if recommendation_alerts:
+    with st.expander(
+        f"🔔 {len(recommendation_alerts)} recommendation change(s) since your last visit",
+        expanded=True,
+    ):
+        for alert in recommendation_alerts:
+            st.markdown(f"**{alert['title']}**")
+            st.caption(alert["message"])
+        if st.button("Mark all as read"):
+            for alert in recommendation_alerts:
+                api_post(f"/notifications/{alert['id']}/read")
+            st.rerun()
+
 snapshot = workbench["snapshot"]
 schedule = snapshot["schedule"]
 schedule_info, force_choice, force_action = st.columns([4, 2, 1])
@@ -140,7 +159,9 @@ def render_scope(rows, scope, account_positions=None):
         return
 
     st.caption(
-        "The same alphabetically ordered stock rows appear in every tab; no stock selection is required."
+        "The same stock rows appear in every tab (Owned is ordered by recommendation "
+        "urgency — STRONG_SELL first; Prospective is alphabetical since every row there "
+        "is already Strong Buy); no stock selection is required."
     )
     portfolio_tab, data_tab, financial_tab, style_tab, investor_tab, summary_tab = st.tabs([
         "Portfolio & Thesis", "Data & Freshness", "Financial Analysis",
@@ -363,19 +384,67 @@ if selected_account != "All accounts":
 else:
     summary = workbench.get("summary")
 
+accounts = api_get("/accounts", critical=False) or []
+deployable_cash = sum(float(item["cash_balance"]) for item in accounts)
+
 if summary:
-    summary_cols = st.columns(6)
+    summary_cols = st.columns(7)
     summary_cols[0].metric("Purchase cost", f"₹{summary['remaining_cost']:,.0f}")
     summary_cols[1].metric("Current value", f"₹{summary['market_value']:,.0f}")
     summary_cols[2].metric("Unrealised P&L", f"₹{summary['unrealised_profit']:,.0f}")
     summary_cols[3].metric("Realised P&L", f"₹{summary['realised_profit']:,.0f}")
     summary_cols[4].metric("Dividend income", f"₹{summary['dividend_income']:,.0f}")
     summary_cols[5].metric("Total profit", f"₹{summary['total_profit']:,.0f}")
+    # G3: deployable cash has no in-app ledger — it's whatever was last set on Portfolio Setup.
+    summary_cols[6].metric("Deployable cash", f"₹{deployable_cash:,.0f}",
+        help="Set per account on Portfolio Setup. There is no cash transaction ledger.")
 else:
     st.caption(
         "Total portfolio value isn't in the cached snapshot yet — use \"Dashboard snapshot "
         "only\" and Run now above to refresh it."
     )
+
+with st.expander("📈 Performance history & diversification"):
+    perf_tab, diversification_tab = st.tabs(["Performance history", "Sector & cap-segment mix"])
+    with perf_tab:
+        # G1: the real ledger's own return/drawdown/benchmark history — previously only the
+        # simulated notional portfolio had this.
+        performance = api_get("/portfolio/performance", critical=False)
+        if not performance or not performance["rows"]:
+            st.info("Performance history appears once at least one stored price date falls "
+                     "on or after your earliest transaction.")
+        else:
+            perf_metrics = st.columns(3)
+            perf_metrics[0].metric("Max drawdown", f"{performance['max_drawdown'] * 100:.2f}%")
+            perf_metrics[1].metric("Time-weighted return",
+                f"{performance['time_weighted_return'] * 100:.2f}%"
+                if performance["time_weighted_return"] is not None else "—")
+            perf_metrics[2].metric("Money-weighted return (XIRR)",
+                f"{performance['money_weighted_return'] * 100:.2f}%"
+                if performance["money_weighted_return"] is not None else "—")
+            history = pd.DataFrame(performance["rows"])
+            series = ["total_value", "net_contributions"]
+            if "benchmark_value" in history.columns:
+                series.append("benchmark_value")
+            st.line_chart(history.set_index("date")[series])
+            for limitation in performance["limitations"]:
+                st.caption(f"• {limitation}")
+    with diversification_tab:
+        # G2: portfolio-level sector/cap-segment mix — per-stock weight caps alone can miss
+        # concentration spread across several well-sized positions in the same sector.
+        diversification = api_get("/portfolio/diversification", critical=False)
+        if not diversification or not diversification["by_sector"]:
+            st.info("No priced owned positions yet.")
+        else:
+            div_cols = st.columns(2)
+            with div_cols[0]:
+                st.caption("By sector")
+                sector_frame = pd.DataFrame(diversification["by_sector"]).set_index("label")
+                st.bar_chart(sector_frame["weight"] * 100)
+            with div_cols[1]:
+                st.caption("By market-cap segment")
+                cap_frame = pd.DataFrame(diversification["by_cap_segment"]).set_index("label")
+                st.bar_chart(cap_frame["weight"] * 100)
 
 owned_tab, prospective_tab = st.tabs([
     f"Owned stocks ({len(owned_rows)})",
@@ -387,10 +456,11 @@ with prospective_tab:
     render_scope(workbench["prospective"], "PROSPECTIVE")
 
 with st.expander("Manage data and workflows"):
-    links = st.columns(6)
+    links = st.columns(7)
     links[0].page_link("pages/1_Portfolio_Setup.py", label="Portfolio Setup")
     links[1].page_link("pages/3_Prices.py", label="Data Sources & Sync")
     links[2].page_link("pages/6_Financial_Analysis.py", label="Financial Analysis")
     links[3].page_link("pages/7_Investor_Styles.py", label="Styles & Screening")
     links[4].page_link("pages/8_Followed_Investors.py", label="Followed Investors")
-    links[5].page_link("pages/12_System_Status.py", label="System Status")
+    links[5].page_link("pages/13_Watchlist_and_Strategy.py", label="Watchlist & Strategy")
+    links[6].page_link("pages/12_System_Status.py", label="System Status")

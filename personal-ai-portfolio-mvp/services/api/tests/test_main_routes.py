@@ -242,3 +242,104 @@ def test_disclosure_document_content_endpoint_404_when_no_content_stored(client,
 
     response = client.get(f"/investor-disclosures/documents/{document_id}/content")
     assert response.status_code == 404
+
+
+# ---- G3: real-account cash tracking ----
+
+def test_account_cash_defaults_to_zero_and_can_be_updated(client, session_factory):
+    db = session_factory()
+    account = Account(name="CashTest", broker_name="Manual", currency="INR")
+    db.add(account)
+    db.commit()
+    account_id = account.id
+    db.close()
+
+    listed = client.get("/accounts").json()
+    assert next(item for item in listed if item["id"] == account_id)["cash_balance"] == "0.0000"
+
+    response = client.patch(f"/accounts/{account_id}/cash", json={"cash_balance": 25000})
+    assert response.status_code == 200
+    assert response.json()["cash_balance"] == "25000.0000"
+
+
+def test_account_cash_update_404_for_unknown_account(client):
+    response = client.patch("/accounts/999999/cash", json={"cash_balance": 100})
+    assert response.status_code == 404
+
+
+def test_account_cash_rejects_negative_balance(client, session_factory):
+    db = session_factory()
+    account = Account(name="CashTest2", broker_name="Manual", currency="INR")
+    db.add(account)
+    db.commit()
+    account_id = account.id
+    db.close()
+
+    response = client.patch(f"/accounts/{account_id}/cash", json={"cash_balance": -1})
+    assert response.status_code == 422
+
+
+# ---- G7: mid-funnel watching tier ----
+
+def test_watch_and_unwatch_a_stock(client, session_factory):
+    db = session_factory()
+    instrument = Instrument(exchange="NSE", symbol="WATCHME", company_name="Watch Me Ltd")
+    db.add(instrument)
+    db.commit()
+    instrument_id = instrument.id
+    db.close()
+
+    response = client.post(f"/watchlist/{instrument_id}/watch", json={"notes": "Researching this one"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "WATCHING"
+
+    watching = client.get("/watchlist/watching").json()
+    assert any(item["instrument_id"] == instrument_id for item in watching)
+
+    archived = client.post(f"/watchlist/{instrument_id}/archive")
+    assert archived.status_code == 200
+    watching_after = client.get("/watchlist/watching").json()
+    assert not any(item["instrument_id"] == instrument_id for item in watching_after)
+
+
+def test_watching_a_stock_does_not_require_the_strong_buy_gate(client, session_factory):
+    # Unlike POST /watchlist (Prospective), watching should accept any instrument regardless
+    # of its current recommendation tier — that's the whole point of the mid-funnel list.
+    db = session_factory()
+    instrument = Instrument(exchange="NSE", symbol="NODATA", company_name="No Data Ltd")
+    db.add(instrument)
+    db.commit()
+    instrument_id = instrument.id
+    db.close()
+
+    response = client.post(f"/watchlist/{instrument_id}/watch", json={})
+    assert response.status_code == 200
+
+
+# ---- G1 / G2 / G8 routes ----
+
+def test_portfolio_performance_route_returns_empty_history_with_no_transactions(client):
+    response = client.get("/portfolio/performance")
+    assert response.status_code == 200
+    assert response.json()["rows"] == []
+
+
+def test_portfolio_diversification_route_returns_empty_breakdown_with_no_positions(client):
+    response = client.get("/portfolio/diversification")
+    assert response.status_code == 200
+    assert response.json()["by_sector"] == []
+
+
+def test_deployment_plan_route_reflects_account_cash(client, session_factory):
+    db = session_factory()
+    account = Account(name="DeployTest", broker_name="Manual", currency="INR", cash_balance=Decimal("15000"))
+    db.add(account)
+    db.commit()
+    db.close()
+
+    response = client.get("/portfolio/deployment-plan")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available_cash"] == 15000.0
+    assert payload["trim_candidates"] == []
+    assert payload["buy_candidates"] == []

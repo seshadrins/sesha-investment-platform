@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import Instrument, NotionalPortfolio, NotionalTransaction, Price, UniverseMembership
+from .performance_math import xirr
 
 
 class NotionalPortfolioError(ValueError):
@@ -265,28 +266,13 @@ def performance_history(db: Session, portfolio: NotionalPortfolio) -> dict:
         if tx.transaction_type == "CASH_IN": cash_flows.append((tx.execution_date, -Decimal(tx.requested_amount)))
         elif tx.transaction_type == "CASH_OUT": cash_flows.append((tx.execution_date, Decimal(tx.requested_amount)))
     if rows: cash_flows.append((rows[-1]["date"], rows[-1]["value"]))
-    money_weighted = _xirr(cash_flows)
+    money_weighted = xirr(cash_flows)
     return {"rows": rows, "max_drawdown": max_drawdown,
             "time_weighted_return": rows[-1]["time_weighted_return"] if rows else None,
             "money_weighted_return": money_weighted, "benchmark_available": benchmark_available,
             "limitations": ["Values use stored closing prices, not executable intraday quotes.",
                 "Missing closes carry the latest earlier stored close; corporate actions require verified adjusted data.",
                 "Benchmark values are normalized to starting cash and do not model later contributions."]}
-
-
-def _xirr(cash_flows: list[tuple[date, Decimal]]) -> Decimal | None:
-    if len(cash_flows) < 2 or cash_flows[-1][0] <= cash_flows[0][0]: return None
-    origin = cash_flows[0][0]
-    def npv(rate: float) -> float:
-        return sum(float(amount) / ((1 + rate) ** ((day - origin).days / 365))
-                   for day, amount in cash_flows)
-    low, high = -.9999, 10.0
-    if npv(low) * npv(high) > 0: return None
-    for _ in range(100):
-        middle = (low + high) / 2
-        if npv(low) * npv(middle) <= 0: high = middle
-        else: low = middle
-    return Decimal(str((low + high) / 2))
 
 
 def recommendation_learning(db: Session, portfolio: NotionalPortfolio) -> dict:
