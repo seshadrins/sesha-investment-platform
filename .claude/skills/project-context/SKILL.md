@@ -29,8 +29,8 @@ unrelated personal portfolio CSV exports one level up, at the git root — not p
 ```
 Browser → Streamlit UI :8501 → FastAPI :8000 → PostgreSQL + pgvector
                                      ^
-                          analysis-scheduler (same image as api,
-                          runs the morning orchestration job)
+                          analysis-scheduler (built from the same source
+                          as api, but a SEPARATE image — see gotcha below)
 ```
 
 Docker Compose services (`personal-ai-portfolio-mvp/compose.yaml`): `db`, `api`,
@@ -74,10 +74,23 @@ generators — never to change a recommendation.
 
 ## Dev workflow gotchas (learned hands-on, keep current)
 
-- **Docker images bake in the code — there are no live volume mounts for `api`/`ui` in
-  `compose.yaml`.** After editing anything under `services/api` or `services/ui`, a plain
-  `docker compose restart` reuses the stale image and silently no-ops your change. Always:
-  `docker compose build api ui && docker compose up -d api ui`.
+- **Docker images bake in the code — there are no live volume mounts for `api`/`ui`/
+  `analysis-scheduler` in `compose.yaml`.** After editing anything under `services/api` or
+  `services/ui`, a plain `docker compose restart` reuses the stale image and silently no-ops
+  your change. Always: `docker compose build api ui && docker compose up -d api ui`.
+  **`analysis-scheduler` builds from the same `services/api` source but is its own image —
+  rebuilding `api` does NOT rebuild it.** It's easy to forget since it never needs touching
+  for a UI-only change, but any backend edit does need
+  `docker compose build analysis-scheduler && docker compose up -d analysis-scheduler` too —
+  it runs `ANALYSIS_RUN_ON_STARTUP` on every recreate plus a `tue-sat 06:00 Asia/Kolkata` job,
+  and *every* run calls `_store_workbench_snapshot()`, overwriting the same cached
+  `AnalysisSnapshot` row `api` serves from. Forgetting this doesn't error at deploy time — it
+  silently reintroduces old bugs (a stale-shaped payload, e.g. missing a field a recent phase
+  added) the next time the scheduler's job fires, which can be hours later and look like a
+  regression in whatever shipped most recently, even though that code is fine. If a payload
+  shape looks wrong after a deploy that should have fixed it, check
+  `docker compose ps --format "table {{.Name}}\t{{.CreatedAt}}"` for a stale
+  `analysis-scheduler` before debugging the application code.
 - **`GET /stock-workbench` is served from a cached `AnalysisSnapshot` row (`snapshot_key =
   "stock_workbench"`), not rebuilt per request.** After a backend change that alters its
   payload shape, force a rebuild before verifying via curl or the UI:

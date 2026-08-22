@@ -139,6 +139,12 @@ def render_scope(workbench, rows, scope, account_positions=None):
         if frame.empty:
             st.info("No rows are available for this view.")
         else:
+            # A placeholder reserves the buttons' position above the table now, at this
+            # point in the script; st.dataframe() below is what actually knows the current
+            # selection, so the placeholder's content is only filled in after — Streamlit
+            # decouples where a widget appears from when its content is set, so this avoids
+            # needing the selection before the table that produces it.
+            buttons_slot = st.empty()
             display_frame = frame.style.apply(_highlight_price_move, axis=1)
             event = st.dataframe(
                 display_frame, width="stretch", height=TABLE_HEIGHT, hide_index=True,
@@ -150,7 +156,8 @@ def render_scope(workbench, rows, scope, account_positions=None):
                 "Select a row, then open its thesis to see or update the reasoning behind it."
             )
             selected_indices = event.selection.rows if event and event.selection else []
-            render_deep_link_buttons(rows, selected_indices, scope, "portfolio")
+            with buttons_slot.container():
+                render_deep_link_buttons(rows, selected_indices, scope, "portfolio")
 
     with data_tab:
         frame = pd.DataFrame([{
@@ -245,6 +252,7 @@ def render_scope(workbench, rows, scope, account_positions=None):
         if frame.empty:
             st.info("No rows are available for this view.")
         else:
+            buttons_slot = st.empty()
             event = st.dataframe(
                 frame, width="stretch", height=TABLE_HEIGHT, hide_index=True,
                 on_select="rerun", selection_mode="single-row", key=f"summary_select_{scope}",
@@ -254,7 +262,8 @@ def render_scope(workbench, rows, scope, account_positions=None):
                 "flags or Style Fit detail with that stock already selected."
             )
             selected_indices = event.selection.rows if event and event.selection else []
-            render_deep_link_buttons(rows, selected_indices, scope, "summary")
+            with buttons_slot.container():
+                render_deep_link_buttons(rows, selected_indices, scope, "summary")
         st.download_button(
             f"Download {scope.lower()} summary",
             frame.to_csv(index=False).encode("utf-8"),

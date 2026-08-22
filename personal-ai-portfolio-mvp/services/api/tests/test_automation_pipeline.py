@@ -17,6 +17,7 @@ from app.automation_pipeline import (
     _snapshot_metadata,
     _store_workbench_snapshot,
     _upstox_instruments,
+    reconcile_prospective_promotions,
 )
 from app.database import Base
 from app.models import (
@@ -26,6 +27,7 @@ from app.models import (
     Instrument,
     NotionalTransaction,
     Price,
+    ScreeningResult,
     Thesis,
     ThesisStatus,
     Transaction,
@@ -118,6 +120,83 @@ def test_upstox_instruments_skips_instruments_without_an_isin():
     supported, skipped = _upstox_instruments(db)
     assert supported == []
     assert skipped == ["NSE:OWNED"]
+
+
+def _candidate(db, symbol: str) -> Instrument:
+    instrument = Instrument(exchange="NSE", symbol=symbol, company_name=f"{symbol} Ltd",
+                            isin=f"INE{symbol[:3]}00000")
+    db.add(instrument)
+    db.flush()
+    return instrument
+
+
+def _screening_result(instrument_id: int, screened_on: date, recommendation: str,
+                      criteria_version: str) -> ScreeningResult:
+    return ScreeningResult(universe_id="nifty500", instrument_id=instrument_id,
+        screened_on=screened_on, recommendation=recommendation, analysis_status="READY",
+        criteria_version=criteria_version)
+
+
+def test_reconcile_promotes_a_buy_result_screened_before_the_gate_widened():
+    """The scenario that motivated this function: a company was screened as BUY back when
+    only STRONG_BUY was promoted, so it never got a WatchlistItem. Reconciling should
+    promote it now without needing to re-screen."""
+    db = session()
+    stale_buy = _candidate(db, "STALEBUY")
+    db.add(_screening_result(stale_buy.id, date(2026, 8, 1), "BUY", "v1"))
+    db.commit()
+
+    result = reconcile_prospective_promotions(db, "nifty500")
+
+    assert result == {"checked": 1, "promoted": 1, "promoted_instrument_ids": [stale_buy.id]}
+    watchlist = db.query(WatchlistItem).filter_by(instrument_id=stale_buy.id).one()
+    assert watchlist.status == "ACTIVE"
+    assert watchlist.source == "SCREEN:nifty500"
+
+
+def test_reconcile_ignores_non_qualifying_results_and_already_active_or_owned_instruments():
+    db = session()
+    owned_buy = _own(db, "OWNBUY")
+    avoid = _candidate(db, "AVOIDIT")
+    already_active = _candidate(db, "ALREADY")
+    db.add_all([
+        _screening_result(owned_buy.id, date(2026, 8, 1), "BUY", "v1"),
+        _screening_result(avoid.id, date(2026, 8, 1), "AVOID", "v1"),
+        _screening_result(already_active.id, date(2026, 8, 1), "STRONG_BUY", "v1"),
+    ])
+    db.flush()
+    db.add(WatchlistItem(instrument_id=already_active.id, status="ACTIVE", source="SCREEN:nifty500"))
+    db.commit()
+
+    result = reconcile_prospective_promotions(db, "nifty500")
+
+    assert result["promoted"] == 0
+    assert db.query(WatchlistItem).filter_by(instrument_id=owned_buy.id).first() is None
+    assert db.query(WatchlistItem).filter_by(instrument_id=avoid.id).first() is None
+
+
+def test_reconcile_uses_only_the_most_recent_screening_result_per_instrument():
+    """An instrument screened AVOID and later re-screened BUY should promote (latest wins);
+    the reverse (once-BUY, now AVOID) should not stay promoted from a stale row, and an
+    ARCHIVED watchlist item from a prior demotion should be reactivated."""
+    db = session()
+    improved = _candidate(db, "IMPROVED")
+    demoted = _candidate(db, "DEMOTED")
+    db.add_all([
+        _screening_result(improved.id, date(2026, 5, 1), "AVOID", "v1"),
+        _screening_result(improved.id, date(2026, 8, 1), "BUY", "v2"),
+        _screening_result(demoted.id, date(2026, 5, 1), "STRONG_BUY", "v1"),
+        _screening_result(demoted.id, date(2026, 8, 1), "REVIEW", "v2"),
+    ])
+    db.flush()
+    db.add(WatchlistItem(instrument_id=demoted.id, status="ARCHIVED", source="SCREEN:nifty500"))
+    db.commit()
+
+    result = reconcile_prospective_promotions(db, "nifty500")
+
+    assert result["promoted"] == 1
+    assert db.query(WatchlistItem).filter_by(instrument_id=improved.id).one().status == "ACTIVE"
+    assert db.query(WatchlistItem).filter_by(instrument_id=demoted.id).one().status == "ARCHIVED"
 
 
 def test_latest_automation_results_only_returns_automation_prefixed_snapshots_with_a_payload():

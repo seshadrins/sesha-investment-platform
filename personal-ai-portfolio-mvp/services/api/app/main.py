@@ -165,6 +165,7 @@ from .automation_pipeline import (
     deployment_plan_data,
     list_prospective_stocks_data,
     list_watching_stocks_data,
+    reconcile_prospective_promotions,
 )
 
 app = FastAPI(
@@ -432,6 +433,18 @@ def screen_next_universe_batch(
     except RuntimeError as exc:
         status = 503 if "TOKEN" in str(exc) else 409
         raise HTTPException(status, str(exc)) from exc
+
+
+@app.post("/screening-universes/{universe_id}/reconcile")
+def reconcile_screening_promotions(universe_id: str, db: Session = Depends(get_db)):
+    """Catch up any already-screened company that qualifies for Prospective under the
+    *current* shortlist criteria but was screened before that criteria applied (e.g. widened
+    from Strong-Buy-only to Buy+Strong-Buy) and so was never promoted. No external API calls
+    — pure re-evaluation of stored screening results against today's rules."""
+    try:
+        return reconcile_prospective_promotions(db, universe_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Screening universe not found.") from exc
 
 
 @app.get("/screening-universes/{universe_id}/results")

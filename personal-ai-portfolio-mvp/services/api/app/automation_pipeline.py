@@ -270,6 +270,49 @@ def _screen_universe_batch(db: Session, universe_id: str, batch_size: int) -> di
     }
 
 
+def reconcile_prospective_promotions(db: Session, universe_id: str = "nifty500") -> dict:
+    """Promotion to Prospective is a side effect of the screening action itself
+    (`_screen_universe_batch` above), decided against whatever the shortlist criteria was
+    *at screening time* — it's never re-evaluated later. So when the criteria widens (e.g.
+    Changes-SetB Phase 6 added BUY alongside STRONG_BUY), every company already screened
+    under the old, narrower rule sits there with a qualifying `ScreeningResult` but no
+    `WatchlistItem`, until it happens to be screened again — which, at 10 companies per
+    quarterly-cycle batch, could be a long wait. This is the catch-up: for each instrument's
+    most recent screening result in this universe, promote it if it currently qualifies and
+    isn't already ACTIVE. Safe to run any time — a no-op for anything already correctly
+    promoted or correctly excluded, and it never re-screens (no external API calls)."""
+    config = get_screening_universe(universe_id)
+    latest_by_instrument: dict[int, ScreeningResult] = {}
+    for result in db.scalars(select(ScreeningResult).where(
+        ScreeningResult.universe_id == universe_id
+    ).order_by(ScreeningResult.screened_on)).all():
+        latest_by_instrument[result.instrument_id] = result  # last (latest-dated) write wins
+    owned_ids = {position["instrument_id"] for position in _snapshot_or_409(db)["positions"]}
+    promoted = []
+    for instrument_id, result in latest_by_instrument.items():
+        if instrument_id in owned_ids or result.recommendation not in config["shortlist_recommendations"]:
+            continue
+        watchlist = db.scalar(select(WatchlistItem).where(
+            WatchlistItem.instrument_id == instrument_id
+        ))
+        if watchlist and watchlist.status == "ACTIVE":
+            continue
+        note = f"Reconciled from the {result.screened_on.isoformat()} {config['name']} screening result."
+        if watchlist:
+            watchlist.status = "ACTIVE"
+            watchlist.source = f"SCREEN:{universe_id}"
+            watchlist.notes = note
+        else:
+            db.add(WatchlistItem(
+                instrument_id=instrument_id, status="ACTIVE",
+                source=f"SCREEN:{universe_id}", notes=note,
+            ))
+        promoted.append(instrument_id)
+    db.commit()
+    return {"checked": len(latest_by_instrument), "promoted": len(promoted),
+            "promoted_instrument_ids": promoted}
+
+
 def _build_stock_workbench(db: Session):
     """Return fixed, stock-level rows for every dashboard evidence tab."""
     snapshot = _snapshot_or_409(db)

@@ -88,10 +88,10 @@ with screening_tab:
             "Owned stocks are excluded from prospective screening."
         )
 
-        left, middle, right = st.columns([1, 1, 2])
-        batch_size = right.number_input("Companies per batch", min_value=1, max_value=50, value=10,
-                                        help="A batch is interleaved across Large, Mid, and Small cap.")
-        if left.button("Refresh constituents", type="secondary"):
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
+        batch_size = col4.number_input("Companies per batch", min_value=1, max_value=50, value=10,
+                                       help="A batch is interleaved across Large, Mid, and Small cap.")
+        if col1.button("Refresh constituents", type="secondary"):
             with st.spinner("Downloading the official index constituent files…"):
                 refreshed = api_post("/screening-universes/nifty500/refresh", timeout=180)
             if refreshed:
@@ -101,17 +101,30 @@ with screening_tab:
                     f"and {refreshed['segments']['SMALL']} Small cap."
                 )
                 st.rerun()
-        if middle.button("Screen next batch", type="primary",
-                         disabled=universe["constituents"] == 0 or universe["pending_this_cycle"] == 0):
+        if col2.button("Screen next batch", type="primary",
+                       disabled=universe["constituents"] == 0 or universe["pending_this_cycle"] == 0):
             with st.spinner("Syncing Upstox fundamentals and applying every configured rule…"):
                 screened = api_post(
                     f"/screening-universes/nifty500/screen?batch_size={int(batch_size)}", timeout=600
                 )
             if screened:
-                promoted = sum(item["recommendation"] == "STRONG_BUY" for item in screened["results"])
+                promoted = sum(item["recommendation"] in {"STRONG_BUY", "BUY"} for item in screened["results"])
                 st.success(
                     f"Screened {screened['processed']} companies; {promoted} entered Prospective Stocks. "
                     f"{screened['remaining']} remain in the quarterly cycle."
+                )
+                st.rerun()
+        if col3.button(
+            "Reconcile prospective", type="secondary",
+            help="Catch up companies already screened as Buy or Strong Buy before that "
+                 "criteria applied, so they were never promoted. No external calls.",
+        ):
+            with st.spinner("Re-checking stored screening results against current criteria…"):
+                reconciled = api_post("/screening-universes/nifty500/reconcile", timeout=60)
+            if reconciled:
+                st.success(
+                    f"Checked {reconciled['checked']} screened companies; "
+                    f"{reconciled['promoted']} newly entered Prospective Stocks."
                 )
                 st.rerun()
 
